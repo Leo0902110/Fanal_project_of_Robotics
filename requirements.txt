@@ -1,0 +1,17 @@
+# Shared base environment for all members.
+# Install this first, then install role-specific requirements only when needed.
+
+numpy>=1.26,<2.0
+scipy>=1.11
+pandas>=2.2
+matplotlib>=3.8
+tqdm>=4.66
+pyyaml>=6.0
+h5py>=3.10
+imageio>=2.34
+imageio-ffmpeg>=0.5.1
+einops>=0.7
+hydra-core>=1.3
+tensorboard>=2.16
+gymnasium>=0.29
+

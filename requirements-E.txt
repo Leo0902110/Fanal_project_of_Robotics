@@ -1,0 +1,6 @@
+-r requirements.txt
+
+# E: experiments, plots, and presentation materials.
+seaborn>=0.13
+opencv-python>=4.9
+wandb>=0.17

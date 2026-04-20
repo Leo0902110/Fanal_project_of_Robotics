@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# D: tactile fusion and active probing.
+opencv-python>=4.9
+wandb>=0.17
+sapien
+mani_skill

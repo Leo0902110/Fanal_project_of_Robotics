@@ -1,0 +1,8 @@
+-r requirements.txt
+
+# C: pseudo-blur generation and uncertainty estimation.
+seaborn>=0.13
+opencv-python>=4.9
+open3d>=0.18
+sapien
+mani_skill

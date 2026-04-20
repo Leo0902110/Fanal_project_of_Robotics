@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# B: vision-only baseline and training.
+opencv-python>=4.9
+wandb>=0.17
+sapien
+mani_skill

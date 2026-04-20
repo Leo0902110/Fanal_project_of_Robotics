@@ -1,0 +1,9 @@
+-r requirements.txt
+
+# A: integration, simulator, visualization, and experiment tracking.
+seaborn>=0.13
+opencv-python>=4.9
+open3d>=0.18
+wandb>=0.17
+sapien
+mani_skill
