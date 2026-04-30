@@ -45,12 +45,81 @@
 4. VS Code。
 5. Git。
 
+Open3D 安装说明：
+1. Python 包名就是 `open3d`，不是写错名。
+2. 当前建议使用 Python 3.10，`open3d` 在 PyPI 上通常使用 3.8 到 3.12 的 wheel。
+3. 如果本机是 Python 3.13，`pip install open3d` 很可能失败；这种情况请重新创建 Python 3.10 的虚拟环境，再安装本项目依赖。
+
 ## 安装说明
+## Google Colab MVP 快速运行
+如果本地电脑无法运行 ManiSkill，可以直接使用 Google Colab。成员 A 推荐优先使用下面流程，因为它能完成项目 MVP 的一键实验链路。
+
+### 1. 拉取代码
+```python
+from google.colab import drive
+drive.mount('/content/drive')
+
+%cd /content/drive/MyDrive
+!mkdir -p Robotics_Final
+%cd Robotics_Final
+
+import os
+if not os.path.exists("Fanal_project_of_Robotics"):
+    !git clone https://github.com/Leo0902110/Fanal_project_of_Robotics.git
+else:
+    %cd Fanal_project_of_Robotics
+    !git pull
+    %cd ..
+
+%cd Fanal_project_of_Robotics
+```
+
+注意：不要把 GitHub token 直接写进 Colab notebook。如果仓库是私有的，请使用 Colab Secrets 或临时授权。
+
+### 2. 安装依赖
+```python
+!python -m pip install --upgrade pip
+!pip install -r requirements.txt
+!pip install -r requirements-A.txt
+```
+
+### 3. 先跑基础 smoke test
+```python
+!python main.py --mode smoke --obs-mode state --max-steps 30 --no-video
+```
+
+### 4. 跑 MVP 实验
+```python
+!python main.py --mode mvp --obs-mode rgbd --max-steps 120 --output-dir results/mvp
+```
+
+如果 Colab 的 RGBD/Vulkan 渲染不可用，可以先降级跑 state 版本：
+
+```python
+!python main.py --mode mvp --obs-mode state --max-steps 120 --no-video --output-dir results/mvp_state
+```
+
+MVP 会输出：
+1. `results/mvp/mvp_results.csv`
+2. `results/mvp/mvp_results.json`
+3. `results/mvp/*.mp4`，如果当前 Colab 支持渲染
+
+当前 MVP 包含三组对比：
+1. `baseline_clean`：干净观测下的基础策略。
+2. `baseline_pseudo_blur`：加入深度噪声和 dropout 的伪模糊基线。
+3. `active_tactile_mvp`：视觉不确定性触发主动探测，并接入触觉占位接口。
+
 ### 1. 创建 Python 虚拟环境
 使用 venv 的示例：
 
 ```bash
 python -m venv .venv
+```
+
+如果本机默认是 Python 3.13，建议显式使用 Python 3.10 创建虚拟环境：
+
+```bash
+python3.10 -m venv .venv
 ```
 
 激活环境：
@@ -83,6 +152,8 @@ pip install -r requirements.txt
 
 ### 4. 安装角色专属依赖
 基础环境装好之后，每位成员只需要安装自己角色额外需要的依赖即可。
+
+如果你安装的是 `requirements-A.txt` 或 `requirements-C.txt`，其中包含 `open3d`。请先确认当前虚拟环境的 Python 版本是 3.10 到 3.12，推荐 3.10。
 
 示例：
 
