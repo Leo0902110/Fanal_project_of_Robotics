@@ -22,9 +22,12 @@ class ManiSkillAgent:
     ):
         self.env_id = env_id
         self.obs_mode = obs_mode
+        self.render_mode = render_mode
         self.pseudo_blur = pseudo_blur or PseudoBlurConfig(enabled=False)
         self.detector = VisualUncertaintyDetector(threshold=uncertainty_threshold)
-        kwargs = {"render_mode": render_mode, "obs_mode": obs_mode}
+        kwargs = {"obs_mode": obs_mode}
+        if render_mode is not None:
+            kwargs["render_mode"] = render_mode
         if control_mode:
             kwargs["control_mode"] = control_mode
         try:
@@ -32,9 +35,10 @@ class ManiSkillAgent:
             print(f"环境 {env_id} 初始化成功，obs_mode={obs_mode}")
         except Exception as exc:
             print(f"环境 {env_id} 初始化失败：{exc}")
-            print("回退至 PickCube-v1 + state 模式，确保 Colab smoke test 能继续。")
+            print("回退至 PickCube-v1 + state + 无渲染模式，确保 Colab smoke test 能继续。")
             self.obs_mode = "state"
-            self.env = gym.make("PickCube-v1", render_mode=render_mode, obs_mode="state")
+            self.render_mode = None
+            self.env = gym.make("PickCube-v1", obs_mode="state")
 
         self.frames = []
         self.last_info = {}
@@ -75,6 +79,8 @@ class ManiSkillAgent:
         return self._prepare_obs(obs), float(np.asarray(reward).mean()), done, self.last_info
 
     def _append_frame(self):
+        if self.render_mode is None:
+            return
         try:
             frame = self._process_obs(self.env.render())
             if isinstance(frame, np.ndarray) and frame.ndim == 3:

@@ -36,10 +36,11 @@ def run_episode(
     save_video: bool,
 ) -> dict:
     blur_config = PseudoBlurConfig(enabled=pseudo_blur, seed=seed)
+    render_mode = "rgb_array" if save_video else None
     agent = ManiSkillAgent(
         env_id=env_id,
         obs_mode=obs_mode,
-        render_mode="rgb_array",
+        render_mode=render_mode,
         pseudo_blur=blur_config,
     )
     obs = agent.reset(seed=seed)
