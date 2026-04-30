@@ -17,17 +17,21 @@ class ManiSkillAgent:
         obs_mode="rgbd",
         control_mode=None,
         render_mode="rgb_array",
+        render_backend=None,
         pseudo_blur: PseudoBlurConfig | None = None,
         uncertainty_threshold=0.18,
     ):
         self.env_id = env_id
         self.obs_mode = obs_mode
         self.render_mode = render_mode
+        self.render_backend = render_backend
         self.pseudo_blur = pseudo_blur or PseudoBlurConfig(enabled=False)
         self.detector = VisualUncertaintyDetector(threshold=uncertainty_threshold)
         kwargs = {"obs_mode": obs_mode}
         if render_mode is not None:
             kwargs["render_mode"] = render_mode
+        if render_backend is not None:
+            kwargs["render_backend"] = render_backend
         if control_mode:
             kwargs["control_mode"] = control_mode
         try:
@@ -38,7 +42,8 @@ class ManiSkillAgent:
             print("回退至 PickCube-v1 + state + 无渲染模式，确保 Colab smoke test 能继续。")
             self.obs_mode = "state"
             self.render_mode = None
-            self.env = gym.make("PickCube-v1", obs_mode="state")
+            self.render_backend = "none"
+            self.env = gym.make("PickCube-v1", obs_mode="state", render_backend="none")
 
         self.frames = []
         self.last_info = {}
