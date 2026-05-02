@@ -13,6 +13,7 @@ class PseudoBlurConfig:
     enabled: bool = False
     depth_noise_std: float = 0.015
     dropout_prob: float = 0.08
+    state_uncertainty: float = 0.65
     seed: int = 0
 
 
@@ -47,8 +48,13 @@ def find_depth_array(obs: Any) -> np.ndarray | None:
 
 def apply_pseudo_blur(obs: Any, config: PseudoBlurConfig) -> Any:
     """Apply in-place depth degradation to simulate transparent/dark-object ambiguity."""
-    if not config.enabled or not isinstance(obs, dict):
+    if not config.enabled:
         return obs
+    if not isinstance(obs, dict):
+        return {
+            "state": obs,
+            "_pseudo_blur_uncertainty": float(config.state_uncertainty),
+        }
 
     rng = np.random.default_rng(config.seed)
 
@@ -85,6 +91,15 @@ class VisualUncertaintyDetector:
         return depth
 
     def estimate(self, obs: Any) -> dict[str, float | bool]:
+        if isinstance(obs, dict) and "_pseudo_blur_uncertainty" in obs:
+            uncertainty = float(np.clip(obs["_pseudo_blur_uncertainty"], 0.0, 1.0))
+            return {
+                "uncertainty": uncertainty,
+                "depth_variance": 0.0,
+                "missing_ratio": 0.0,
+                "triggered": uncertainty >= self.threshold,
+            }
+
         depth = find_depth_array(obs)
         if depth is None:
             return {

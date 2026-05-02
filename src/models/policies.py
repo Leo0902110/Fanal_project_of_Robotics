@@ -97,7 +97,10 @@ class ScriptedPickCubePolicy:
         if self.probe_count >= self.max_probe_steps:
             return False
         uncertainty = context.get("uncertainty", {})
-        score = float(uncertainty.get("uncertainty", 0.0)) if isinstance(uncertainty, dict) else 0.0
+        if isinstance(uncertainty, dict):
+            score = float(uncertainty.get("mean_uncertainty", uncertainty.get("uncertainty", 0.0)))
+        else:
+            score = float(context.get("mean_uncertainty", 0.0))
         return score >= self.uncertainty_threshold
 
     def _probe_action(self) -> np.ndarray:
@@ -161,18 +164,29 @@ class ActivePerceptionPolicy:
     the closed-loop interface needed by the final project.
     """
 
-    def __init__(self, base_policy, action_space, probe_amplitude: float = 0.12):
+    def __init__(
+        self,
+        base_policy,
+        action_space,
+        probe_amplitude: float = 0.12,
+        max_probe_steps: int = 2,
+    ):
         self.base_policy = base_policy
         self.action_space = action_space
         self.probe_amplitude = probe_amplitude
+        self.max_probe_steps = max_probe_steps
+        self.probe_count = 0
 
     def predict(self, obs, step: int = 0, context: dict | None = None):
         context = context or {}
         action = self.base_policy.predict(obs, step=step, context=context)
         if not context.get("active_probe", False):
             return action
+        if self.probe_count >= self.max_probe_steps:
+            return action
 
         probe = np.zeros_like(action, dtype=np.float32)
         if probe.size:
             probe.flat[0] = self.probe_amplitude * ((-1.0) ** step)
+        self.probe_count += 1
         return np.clip(action + probe, self.action_space.low, self.action_space.high)

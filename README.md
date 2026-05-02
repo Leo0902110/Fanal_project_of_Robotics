@@ -1,257 +1,185 @@
-# 面向视觉伪模糊抓取的主动感知视觉-触觉融合扩散策略
+# Active Perception MVP for ManiSkill PickCube
 
-## 项目概述
-本项目面向 ManiSkill 中的复杂抓取场景，研究在视觉观测不可靠时如何提升抓取鲁棒性。目标故障模式是视觉伪模糊，也就是透明、黑色、反光或低纹理物体在深度图或几何边界上出现缺失、噪声或误导性边界。我们在视觉版 Diffusion Policy 的基础上，引入触觉或接触特征，并在视觉不确定性较高时触发主动触觉探测。
+This project is an MVP for validating a closed-loop active perception idea in
+ManiSkill: when RGB-D observations become unreliable under visual pseudo-blur,
+the policy triggers a small tactile-style probing motion before continuing the
+grasp.
 
-## 项目目标
-本项目的短期目标是在两周内完成一个最小但可运行的原型系统。
+The current implementation is intentionally lightweight. It verifies the
+experiment loop, the pseudo-blur trigger, the active probing interface, and the
+result visualization pipeline. A full Diffusion Policy training stack is not
+implemented in this MVP; the code keeps a compatible policy interface so a
+trained DP module can replace the scripted controller later.
 
-原型系统包括：
-1. 一个基于 ManiSkill 的纯视觉 Diffusion Policy 基线。
-2. 一个可控的视觉伪模糊生成模块。
-3. 一个触觉或接触特征编码模块。
-4. 一个由视觉不确定性驱动的主动探测机制。
-5. 一组在伪模糊条件下的定量对比实验。
+## Project Scope
 
-## 项目动机
-标准的基于扩散模型的视觉运动策略，在物体边界清晰时通常表现较好；但面对透明杯、黑色低纹理物体或高反光物体时，深度观测往往不完整或存在误导，从而导致抓取失败。与其将触觉仅作为被动安全信号，本项目更强调把触觉作为一种主动感知手段，在真正执行抓取前修正视觉歧义。
+The MVP focuses on one task:
 
-## 核心思路
-整体流程由四部分组成：
-1. 视觉编码器，用于处理 RGB、深度图或点云观测。
-2. 视觉伪模糊检测器，用于根据深度方差、缺失区域或几何不一致性估计视觉不确定性。
-3. 触觉编码器，用于从仿真器接触信号中提取接触状态、接触位置和力等特征。
-4. 带主动探测机制的融合扩散策略，在视觉不确定时触发触觉探测并生成动作。
+- Environment: ManiSkill `PickCube-v1`
+- Observation: `rgbd` by default, with `state` as a fallback for smoke tests
+- Failure mode: visual pseudo-blur simulated by depth noise and dropout
+- Policy: `ScriptedPickCubePolicy`
+- Active perception: visual uncertainty triggers 1-2 small probing actions
+- Metrics: success rate, total reward, active probe count, mean uncertainty
 
-## 两周可交付范围
-为保证项目可落地，第一版建议限制在以下范围内：
-1. 只做一个 ManiSkill 抓取任务。
-2. 只保留一个纯视觉基线。
-3. 用可控退化来模拟伪模糊，而不是一开始追求高保真透明物体渲染。
-4. 先使用低维接触特征，而不是高分辨率触觉图像。
-5. 主动探测最多增加一到两步交互动作。
+## Core Idea
 
-## 推荐平台
-核心平台：
-1. ManiSkill
-2. SAPIEN
-3. PyTorch
-4. Open3D
+Visual pseudo-blur models scenes where transparent, dark, reflective, or
+low-texture objects produce missing or misleading depth boundaries. Instead of
+treating tactile/contact feedback as only a passive safety signal, this MVP uses
+visual uncertainty as a trigger for active probing.
 
-推荐开发环境：
-1. Windows 11 加 WSL2 Ubuntu 22.04，或者原生 Ubuntu 22.04。
-2. Python 3.10。
-3. CUDA 12.x。
-4. VS Code。
-5. Git。
+The loop is:
 
-Open3D 安装说明：
-1. Python 包名就是 `open3d`，不是写错名。
-2. 当前建议使用 Python 3.10，`open3d` 在 PyPI 上通常使用 3.8 到 3.12 的 wheel。
-3. 如果本机是 Python 3.13，`pip install open3d` 很可能失败；这种情况请重新创建 Python 3.10 的虚拟环境，再安装本项目依赖。
+1. Run RGB-D observation through a pseudo-blur uncertainty detector.
+2. If uncertainty is high, execute a short probing motion during approach.
+3. Continue the scripted grasp state machine.
+4. Log success, reward, uncertainty, and probing statistics.
 
-## 安装说明
-## Google Colab MVP 快速运行
-如果本地电脑无法运行 ManiSkill，可以直接使用 Google Colab。成员 A 推荐优先使用下面流程，因为它能完成项目 MVP 的一键实验链路。
+## Current Policy
 
-### 1. 拉取代码
-```python
-from google.colab import drive
-drive.mount('/content/drive')
+`ScriptedPickCubePolicy` is a placeholder policy for the MVP. It uses a simple
+state machine:
 
-%cd /content/drive/MyDrive
-!mkdir -p Robotics_Final
-%cd Robotics_Final
+1. `approach`
+2. `descend`
+3. `close_gripper`
+4. `transfer`
+5. `release`
 
-import os
-if not os.path.exists("Fanal_project_of_Robotics"):
-    !git clone https://github.com/Leo0902110/Fanal_project_of_Robotics.git
-else:
-    %cd Fanal_project_of_Robotics
-    !git pull
-    %cd ..
+When `--use-active-probe` is enabled and visual uncertainty exceeds the
+threshold, the policy performs a small lateral probing action before continuing
+the grasp. This is not a learned Diffusion Policy yet, but it exercises the same
+observation-policy-action interface needed by a later DP implementation.
 
-%cd Fanal_project_of_Robotics
-```
+## Quick Start
 
-注意：不要把 GitHub token 直接写进 Colab notebook。如果仓库是私有的，请使用 Colab Secrets 或临时授权。
+Install the base dependencies first:
 
-### 2. 安装依赖
-```python
-!python -m pip install --upgrade pip
-!pip install -r requirements.txt
-!pip install -r requirements-A.txt
-```
-
-### 3. 先跑基础 smoke test
-```python
-!python main.py --mode smoke --obs-mode state --max-steps 30 --no-video
-```
-
-### 4. 跑 MVP 实验
-```python
-!python main.py --mode mvp --obs-mode rgbd --max-steps 120 --output-dir results/mvp
-```
-
-如果 Colab 的 RGBD/Vulkan 渲染不可用，可以先降级跑 state 版本：
-
-```python
-!python main.py --mode mvp --obs-mode state --max-steps 120 --no-video --output-dir results/mvp_state
-```
-
-MVP 会输出：
-1. `results/mvp/mvp_results.csv`
-2. `results/mvp/mvp_results.json`
-3. `results/mvp/*.mp4`，如果当前 Colab 支持渲染
-
-当前 MVP 包含三组对比：
-1. `baseline_clean`：干净观测下的基础策略。
-2. `baseline_pseudo_blur`：加入深度噪声和 dropout 的伪模糊基线。
-3. `active_tactile_mvp`：视觉不确定性触发主动探测，并接入触觉占位接口。
-
-### 1. 创建 Python 虚拟环境
-使用 venv 的示例：
-
-```bash
-python -m venv .venv
-```
-
-如果本机默认是 Python 3.13，建议显式使用 Python 3.10 创建虚拟环境：
-
-```bash
-python3.10 -m venv .venv
-```
-
-激活环境：
-
-Windows PowerShell：
-
-```bash
-.\.venv\Scripts\Activate.ps1
-```
-
-Linux 或 WSL：
-
-```bash
-source .venv/bin/activate
-```
-
-### 2. 安装 PyTorch
-请根据本机 CUDA 版本，从 PyTorch 官网安装对应版本。
-
-推荐目标版本：
-1. Python 3.10
-2. CUDA 12.x
-3. PyTorch 2.3 或 2.4
-
-### 3. 安装项目基础依赖
 ```bash
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### 4. 安装角色专属依赖
-基础环境装好之后，每位成员只需要安装自己角色额外需要的依赖即可。
-
-如果你安装的是 `requirements-A.txt` 或 `requirements-C.txt`，其中包含 `open3d`。请先确认当前虚拟环境的 Python 版本是 3.10 到 3.12，推荐 3.10。
-
-示例：
+Run a lightweight smoke test:
 
 ```bash
-pip install -r requirements-B.txt
+python main.py --mode smoke --obs-mode state --max-steps 30 --no-video
 ```
+
+Run the full local MVP comparison:
 
 ```bash
-pip install -r requirements-D.txt
+bash scripts/run_local_mvp.sh
 ```
 
-### 5. 验证仿真器可用性
-安装完成后，需要确认 ManiSkill 和 SAPIEN 可以被正确导入，并且能够成功创建一个简单环境。
+On Windows PowerShell:
 
-## 建议的仓库结构
-当前仓库后续可以整理为如下结构：
+```powershell
+.\scripts\run_local_mvp.ps1
+```
+
+The script runs three conditions:
+
+1. Clean: `--scene clean --policy scripted`
+2. Pseudo-Blur: `--scene pseudo_blur --policy scripted`
+3. Active-Probe: `--scene pseudo_blur --policy scripted --use-active-probe`
+
+All runs use:
 
 ```text
-configs/
-envs/
-models/
+--mode mvp --obs-mode rgbd --max-steps 120 --seed 42 --no-video
+```
+
+Results are written under:
+
+```text
+results/local_mvp_rgbd/
+```
+
+The summary chart is saved to:
+
+```text
+results/mvp_performance_chart.png
+```
+
+## Manual Commands
+
+Clean baseline:
+
+```bash
+python main.py --mode mvp --scene clean --policy scripted --obs-mode rgbd --max-steps 120 --seed 42 --no-video --output-dir results/local_mvp_rgbd/clean
+```
+
+Pseudo-blur baseline:
+
+```bash
+python main.py --mode mvp --scene pseudo_blur --policy scripted --obs-mode rgbd --max-steps 120 --seed 42 --no-video --output-dir results/local_mvp_rgbd/pseudo_blur
+```
+
+Active probing:
+
+```bash
+python main.py --mode mvp --scene pseudo_blur --policy scripted --use-active-probe --obs-mode rgbd --max-steps 120 --seed 42 --no-video --output-dir results/local_mvp_rgbd/active_probe
+```
+
+Plot results:
+
+```bash
+python scripts/plot_results.py --results-dir results/local_mvp_rgbd
+```
+
+## Outputs
+
+Each experiment directory contains:
+
+- `mvp_results.csv`
+- `mvp_results.json`
+
+The CSV includes:
+
+- `condition`
+- `success_rate`
+- `total_reward`
+- `trigger_count`
+- `visual_trigger_count`
+- `mean_uncertainty`
+- `tactile_contact_count`
+- `requested_policy`
+- `effective_policy`
+- `fallback_used`
+
+`trigger_count` is the number of active probing actions actually executed by
+the policy. `visual_trigger_count` is the number of steps where the visual
+uncertainty detector fired.
+
+## Repository Layout
+
+```text
+main.py
+src/
+  env/wrapper.py
+  models/policies.py
+  perception/pseudo_blur.py
+  tactile/contact.py
 scripts/
-utils/
-results/
-README.md
+  run_local_mvp.sh
+  plot_results.py
 requirements.txt
 ```
 
-## 团队成员
-1. Guo Haoxuan
-2. Liu Weihan
-3. Liu Fuzheng
-4. Chen Gong
-5. Ma Haojun
+## Notes
 
-## 建议分工
-1. A：环境搭建、分支管理、接口定义与最终集成。
-2. B：纯视觉 Diffusion Policy 基线。
-3. C：视觉伪模糊生成与不确定性估计。
-4. D：触觉融合与主动探测。
-5. E：实验整理、画图、视频、PPT 与报告撰写。
-
-## 依赖安装策略
-团队成员不需要做到所有扩展依赖完全一致，但公共基础环境必须保持一致。
-
-建议规则：
-1. 所有人都先安装 requirements.txt。
-2. 每个人再按角色安装自己的专属依赖文件。
-3. A 由于负责集成，建议安装 requirements-A.txt，因为它覆盖范围最广。
-4. B 不需要安装 D 的专属依赖，除非 B 也要调试触觉融合或本地跑完整集成链路。
-5. D 不需要安装 E 偏展示和画图的扩展依赖，除非 D 也负责最终结果图输出。
-
-推荐对应关系：
-1. A 安装 requirements-A.txt。
-2. B 安装 requirements-B.txt。
-3. C 安装 requirements-C.txt。
-4. D 安装 requirements-D.txt。
-5. E 安装 requirements-E.txt。
-
-重要说明：
-如果某位成员需要在本地运行完整端到端项目，而不只是自己负责的模块，那么应直接安装 A 级依赖，而不是只装自己的角色依赖。
-
-## 实验设置
-建议至少做以下对比组：
-1. 干净观测下的纯视觉基线。
-2. 伪模糊观测下的纯视觉基线。
-3. 伪模糊观测下的视觉加触觉融合方法。
-4. 伪模糊观测下的视觉加触觉加主动探测方法。
-
-建议关注的指标：
-1. 抓取成功率。
-2. 接触精度。
-3. 抓取稳定性。
-4. 额外探测步数。
-
-## 预期结果
-一个比较现实的目标是在伪模糊场景下，相对纯视觉基线获得约 10% 到 25% 的绝对抓取成功率提升，同时只增加一到两步探测动作。
-
-## 里程碑
-1. 第 1 到 2 天：环境搭建与基线选择。
-2. 第 3 到 5 天：完成基线、伪模糊模块和接触特征提取。
-3. 第 6 到 8 天：完成第一次端到端集成。
-4. 第 9 到 11 天：完成主实验与消融实验。
-5. 第 12 到 14 天：最终调试、画图、报告与展示。
-
-## 推荐执行顺序
-建议按以下顺序推进：
-1. 先完成 ManiSkill 环境可运行性检查。
-2. 训练或改造纯视觉基线。
-3. 加入伪模糊退化，并验证基线性能下降。
-4. 加入触觉或接触特征融合。
-5. 启用由不确定性驱动的主动探测机制。
-6. 对比所有实验设置并导出图表。
-
-## 备注
-1. 不要在同一个项目里混用 ManiSkill 和 ManiSkill2。
-2. 不要在 requirements.txt 中写死与 CUDA 强绑定的 PyTorch 安装包。
-3. 全组统一采用 venv 方式管理虚拟环境。
-4. 即使角色扩展依赖不同，基础环境也要保持一致。
-5. 第一版优先保证简单、可复现、可交付。
-6. 优先保证完整实验链路，而不是一开始堆复杂模型。
+- The MVP is designed for reproducibility and project delivery, not maximum
+  grasping performance.
+- If RGB-D rendering is unavailable on a local machine, use `--obs-mode state`
+  for smoke testing.
+- On Windows without `pin/pinocchio`, ManiSkill may reject the Panda
+  end-effector controller used by `ScriptedPickCubePolicy`. In that case the
+  runner falls back to a simple sine policy and records `fallback_used=True`.
+- When the environment falls back to `state` observations, pseudo-blur is
+  represented by a surrogate uncertainty signal. This keeps the active
+  perception loop testable, but it is not a substitute for a full RGB-D
+  rendering experiment.
+- The final DP module can be added later by implementing the same `predict`
+  interface used by the current policies.
