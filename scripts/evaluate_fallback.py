@@ -39,7 +39,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         obs_mode=args.obs_mode,
         control_mode=None,
         render_mode=None,
-        render_backend="none",
+        render_backend="none" if args.obs_mode == "state" else None,
         pseudo_blur=blur_config,
     )
     obs = agent.reset(seed=seed)

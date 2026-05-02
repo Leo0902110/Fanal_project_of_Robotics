@@ -41,7 +41,7 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
         obs_mode=args.obs_mode,
         control_mode=control_mode,
         render_mode=None,
-        render_backend="none",
+        render_backend="none" if args.obs_mode == "state" else None,
         pseudo_blur=blur_config,
     )
 
