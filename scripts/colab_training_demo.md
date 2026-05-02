@@ -85,4 +85,5 @@ results/colab_vtabr/fallback_eval/fallback_eval_results.csv
   - `maniskill`：真 ManiSkill 环境
   - `maniskill_state_fallback`：退成了 ManiSkill state 模式
   - `mock`：为了保留 RGBD 主线而使用了 mock fallback
+- 一键脚本现在会自动清理旧 demo、旧 checkpoint 和旧结果，避免不同 obs_mode/backend 的数据混在一起导致训练维度不一致。
 - 真正要做最终课程展示时，再单独打开 `Robotics_Project_Colab_Render_MechArm.ipynb` 处理机械臂视频渲染。

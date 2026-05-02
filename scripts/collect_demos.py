@@ -200,6 +200,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--policy", choices=["sine", "scripted"], default="scripted")
     parser.add_argument("--use-active-probe", action="store_true")
     parser.add_argument("--output-dir", default="data/demos/pickcube_mvp")
+    parser.add_argument(
+        "--clear-output-dir",
+        action="store_true",
+        help="Remove existing episode_*.npz and manifest.json in output-dir before collecting new demos.",
+    )
     return parser.parse_args()
 
 
@@ -207,6 +212,13 @@ def main() -> None:
     args = parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if args.clear_output_dir:
+        for path in sorted(output_dir.glob("episode_*.npz")):
+            path.unlink()
+        manifest_path = output_dir / "manifest.json"
+        if manifest_path.exists():
+            manifest_path.unlink()
+        print(f"Cleared existing demos under: {output_dir}")
 
     rows = []
     for episode_index in range(args.num_episodes):

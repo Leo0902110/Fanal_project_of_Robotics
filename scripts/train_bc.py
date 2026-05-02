@@ -45,6 +45,7 @@ def load_transitions(demo_dir: Path) -> tuple[np.ndarray, np.ndarray]:
     action_targets = []
     expected_obs_dim = None
     expected_action_dim = None
+    reference_path = None
 
     for episode in dataset:
         obs = episode.observations
@@ -52,11 +53,15 @@ def load_transitions(demo_dir: Path) -> tuple[np.ndarray, np.ndarray]:
         if expected_obs_dim is None:
             expected_obs_dim = obs.shape[1]
             expected_action_dim = actions.shape[1]
+            reference_path = episode.path
         if obs.shape[1] != expected_obs_dim or actions.shape[1] != expected_action_dim:
             raise ValueError(
                 "All demo episodes must have matching observation and action dimensions. "
                 f"Expected ({expected_obs_dim}, {expected_action_dim}), got "
-                f"({obs.shape[1]}, {actions.shape[1]}) in {episode.path}."
+                f"({obs.shape[1]}, {actions.shape[1]}) in {episode.path}. "
+                f"Reference episode: {reference_path}. "
+                "This usually means old demos from a previous obs_mode/backend are mixed in the same demo dir. "
+                "Delete the old episode_*.npz files or recollect with --clear-output-dir."
             )
 
         transition_features = []

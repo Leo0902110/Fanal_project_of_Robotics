@@ -14,11 +14,13 @@ echo "[1/5] Environment check"
 "${PYTHON_BIN}" scripts/check_pipeline_env.py
 
 echo "[2/5] Collect demos"
+rm -rf "${RUN_DIR}" "${RESULT_DIR}"
 "${PYTHON_BIN}" scripts/collect_demos.py \
   --num-episodes "${NUM_EPISODES}" \
   --max-steps "${MAX_STEPS}" \
   --scene pseudo_blur \
   --use-active-probe \
+  --clear-output-dir \
   --output-dir "${DEMO_DIR}"
 
 echo "[3/5] Train BC"
