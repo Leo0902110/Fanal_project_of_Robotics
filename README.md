@@ -148,6 +148,12 @@ The decision-flow chart is saved to:
 results/mvp_decision_flow_chart.png
 ```
 
+Decision trace animations can be exported as:
+
+```text
+results/active_probe_decision_trace.mp4
+```
+
 ## Manual Commands
 
 Clean baseline:
@@ -184,6 +190,26 @@ Train a minimal behavior cloning baseline:
 
 ```bash
 python scripts/train_bc.py --demo-dir data/demos/pickcube_mvp --output-dir runs/bc_mvp
+```
+
+Evaluate the trained BC policy in the environment:
+
+```bash
+python scripts/evaluate_bc.py --checkpoint runs/bc_mvp/bc_policy.pt --scene pseudo_blur --use-active-probe --output-dir results/bc_eval
+```
+
+Compare BC against the fallback policy:
+
+```bash
+python scripts/evaluate_fallback.py --num-episodes 5 --scene pseudo_blur --use-active-probe --output-dir results/policy_comparison/fallback
+python scripts/evaluate_bc.py --checkpoint runs/bc_mvp/bc_policy.pt --num-episodes 5 --scene pseudo_blur --use-active-probe --output-dir results/policy_comparison/bc
+python scripts/plot_policy_comparison.py --fallback-csv results/policy_comparison/fallback/fallback_eval_results.csv --bc-csv results/policy_comparison/bc/bc_eval_results.csv
+```
+
+Render a decision-trace animation for presentation:
+
+```bash
+python scripts/render_decision_trace.py --input results/local_mvp_rgbd/active_probe/active_probe_decision_trace.csv --output results/active_probe_decision_trace.mp4
 ```
 
 ## Outputs
@@ -243,8 +269,11 @@ is:
 
 1. Collect scripted or fallback demonstrations.
 2. Train a behavior cloning baseline on `(observation, action)` pairs.
-3. Add uncertainty and boundary-confidence features.
-4. Replace the BC baseline with a Diffusion Policy once the data path is stable.
+3. Evaluate the BC policy back inside ManiSkill.
+4. Add richer RGB-D or point-cloud encoders once the environment stack is
+   stable.
+5. Replace the BC baseline with a Diffusion Policy once the data and evaluation
+   path are stable.
 
 The current BC baseline already appends `uncertainty` and
 `boundary_confidence` to the flattened observation vector:
@@ -267,6 +296,10 @@ src/
 scripts/
   collect_demos.py
   train_bc.py
+  evaluate_bc.py
+  evaluate_fallback.py
+  plot_policy_comparison.py
+  render_decision_trace.py
   run_local_mvp.sh
   plot_results.py
 requirements.txt
