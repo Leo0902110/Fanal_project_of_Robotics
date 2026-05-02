@@ -89,16 +89,19 @@ class ManiSkillAgent:
         self.obs_mode = obs_mode
         self.render_mode = render_mode
         self.render_backend = render_backend
+        if self.obs_mode != "state" and self.render_backend == "none":
+            print("检测到视觉观测模式下 render_backend='none'，自动改为默认渲染后端以保留 RGBD。")
+            self.render_backend = None
         self.pseudo_blur = pseudo_blur or PseudoBlurConfig(enabled=False)
         self.detector = VisualUncertaintyDetector(threshold=uncertainty_threshold)
         self.using_mock_env = False
         self.backend_name = "unknown"
         self.init_error = ""
-        kwargs = {"obs_mode": obs_mode}
+        kwargs = {"obs_mode": self.obs_mode}
         if render_mode is not None:
             kwargs["render_mode"] = render_mode
-        if render_backend is not None:
-            kwargs["render_backend"] = render_backend
+        if self.render_backend is not None:
+            kwargs["render_backend"] = self.render_backend
         if control_mode:
             kwargs["control_mode"] = control_mode
 
