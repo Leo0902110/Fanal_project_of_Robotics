@@ -73,3 +73,33 @@ results/mvp/mvp_results.csv
 results/mvp/mvp_results.json
 results/mvp/*.mp4
 ```
+
+## 7. 专门渲染机械臂视频
+
+如果目标是生成 ManiSkill/SAPIEN 中 Panda 机械臂的 MP4 展示视频，请打开项目根目录下的：
+
+```text
+Robotics_Project_Colab_Render_MechArm.ipynb
+```
+
+Colab 里先选择：
+
+```text
+Runtime -> Change runtime type -> GPU
+```
+
+然后按 notebook 顺序运行。核心渲染命令是：
+
+```python
+!python main.py \
+  --mode mvp \
+  --scene pseudo_blur \
+  --policy scripted \
+  --use-active-probe \
+  --obs-mode rgbd \
+  --max-steps 120 \
+  --seed 42 \
+  --output-dir results/colab_render_active_probe
+```
+
+注意：渲染视频时不要加 `--no-video`。如果 Vulkan/RGBD 渲染失败，说明当前 Colab runtime 不适合渲染，请换一个 GPU runtime，或先用 state fallback 跑指标。
