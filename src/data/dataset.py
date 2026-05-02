@@ -163,3 +163,95 @@ class DemoDataset:
             ),
             metadata=metadata,
         )
+
+
+@dataclass
+class TrajectoryWindow:
+    """Fixed-horizon training sample for sequence policies."""
+
+    condition: np.ndarray
+    actions: np.ndarray
+    mask: np.ndarray
+    episode_path: Path
+    start_index: int
+
+
+class TrajectoryWindowDataset:
+    """Build observation-conditioned action windows for BC/DP policies.
+
+    Diffusion Policy predicts a short future action sequence instead of one
+    action. This dataset keeps the condition identical to the BC feature vector
+    and pads the final windows with a mask so short successful demos remain
+    usable.
+    """
+
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        horizon: int = 8,
+        only_success: bool = True,
+        stride: int = 1,
+    ):
+        if horizon <= 0:
+            raise ValueError("horizon must be positive")
+        if stride <= 0:
+            raise ValueError("stride must be positive")
+        self.demo_dataset = DemoDataset(root)
+        self.horizon = int(horizon)
+        self.only_success = bool(only_success)
+        self.stride = int(stride)
+        self.samples: list[TrajectoryWindow] = []
+        self._build()
+        if not self.samples:
+            raise ValueError(
+                f"No trajectory windows found in {root}. "
+                "Collect successful scripted demos first or pass only_success=False."
+            )
+
+    def _build(self) -> None:
+        for episode in self.demo_dataset:
+            success = float(episode.metadata.get("success", 0.0) or 0.0)
+            if self.only_success and success < 1.0:
+                continue
+            if episode.length <= 0:
+                continue
+            for start in range(0, episode.length, self.stride):
+                end = min(start + self.horizon, episode.length)
+                valid = end - start
+                actions = np.zeros((self.horizon, episode.actions.shape[1]), dtype=np.float32)
+                mask = np.zeros((self.horizon,), dtype=np.float32)
+                actions[:valid] = episode.actions[start:end]
+                mask[:valid] = 1.0
+                condition = build_policy_features(
+                    episode.observations[start],
+                    uncertainty=float(episode.uncertainty[start]),
+                    boundary_confidence=float(episode.boundary_confidence[start]),
+                    dominant_reason=str(episode.dominant_reason[start]),
+                    probe_state=float(episode.probe_state[start]),
+                    probe_point=episode.probe_point[start],
+                    refined_grasp_target=episode.refined_grasp_target[start],
+                )
+                self.samples.append(
+                    TrajectoryWindow(
+                        condition=condition.astype(np.float32, copy=False),
+                        actions=actions,
+                        mask=mask,
+                        episode_path=episode.path,
+                        start_index=start,
+                    )
+                )
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, index: int) -> TrajectoryWindow:
+        return self.samples[index]
+
+    @property
+    def condition_dim(self) -> int:
+        return int(self.samples[0].condition.shape[0])
+
+    @property
+    def action_dim(self) -> int:
+        return int(self.samples[0].actions.shape[1])

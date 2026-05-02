@@ -237,6 +237,60 @@ python scripts/evaluate_bc.py --checkpoint runs/bc_mvp/bc_policy.pt --num-episod
 python scripts/plot_policy_comparison.py --fallback-csv results/policy_comparison/fallback/fallback_eval_results.csv --bc-csv results/policy_comparison/bc/bc_eval_results.csv
 ```
 
+## Full Mechanical-Arm Render
+
+To verify the real ManiSkill arm instead of the mock fallback, run the render
+entry on a machine with working ManiSkill/SAPIEN rendering:
+
+```bash
+bash scripts/run_render_mecharm.sh
+```
+
+The run is considered a true mechanical-arm demo only when
+`results/render_active_probe/mvp_results.csv` reports:
+
+```text
+env_backend=maniskill
+fallback_used=False
+video_path=results/render_active_probe/active_probe.mp4
+```
+
+If `env_backend=mock`, the algorithm loop still ran, but the visual arm render
+did not initialize in that runtime.
+
+## Minimal Full Diffusion Policy
+
+The MVP now includes a small conditional Diffusion Policy path. It predicts a
+short future action sequence from the same active-perception features used by
+BC: flattened observation, visual uncertainty, boundary confidence, probe
+state, probe point, and refined grasp target.
+
+Run the full policy pipeline:
+
+```bash
+bash scripts/run_diffusion_policy_pipeline.sh
+```
+
+The pipeline performs:
+
+1. collect successful scripted demonstrations;
+2. validate the demo manifest;
+3. train `runs/dp_mvp/diffusion_policy.pt`;
+4. evaluate the learned policy;
+5. compare against the sine fallback policy.
+
+For quicker GitHub/Colab smoke verification, reduce the workload:
+
+```bash
+NUM_EPISODES=10 TRAIN_EPOCHS=2 DIFFUSION_STEPS=10 bash scripts/run_diffusion_policy_pipeline.sh
+```
+
+The main config reference is:
+
+```text
+configs/dp_pickcube.yaml
+```
+
 Render a decision-trace animation for presentation:
 
 ```bash

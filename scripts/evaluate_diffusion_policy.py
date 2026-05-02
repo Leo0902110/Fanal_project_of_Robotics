@@ -1,0 +1,306 @@
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import sys
+from dataclasses import asdict
+from pathlib import Path
+
+import numpy as np
+import torch
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator, TactileProbePlanner
+from src.data import build_policy_features, flatten_observation
+from src.models import DiffusionPolicyConfig, GaussianDiffusionPolicy
+from src.perception import PseudoBlurConfig
+from src.tactile import ContactFeatureExtractor, TactileBoundaryRefiner
+
+
+def _success_from_info(info: dict) -> float:
+    if not info:
+        return 0.0
+    try:
+        return float(np.asarray(info.get("success", 0.0), dtype=np.float32).mean())
+    except Exception:
+        return 0.0
+
+
+class DiffusionPolicyRuntime:
+    def __init__(self, checkpoint_path: Path, action_space, device: torch.device, denoise_steps: int | None = None):
+        del denoise_steps
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        config_dict = dict(checkpoint["config"])
+        self.config = DiffusionPolicyConfig(**config_dict)
+        self.model = GaussianDiffusionPolicy(self.config).to(device)
+        self.model.load_state_dict(checkpoint["model_state_dict"])
+        self.model.eval()
+        self.action_space = action_space
+        self.device = device
+        self.action_low = torch.from_numpy(np.asarray(action_space.low, dtype=np.float32)).to(device)
+        self.action_high = torch.from_numpy(np.asarray(action_space.high, dtype=np.float32)).to(device)
+
+    def predict_sequence(
+        self,
+        obs,
+        *,
+        uncertainty: float,
+        boundary_confidence: float,
+        dominant_reason: str,
+        probe_state: float,
+        probe_point: np.ndarray | None,
+        refined_grasp_target: np.ndarray | None,
+    ) -> np.ndarray:
+        features = build_policy_features(
+            flatten_observation(obs),
+            uncertainty=uncertainty,
+            boundary_confidence=boundary_confidence,
+            dominant_reason=dominant_reason,
+            probe_state=probe_state,
+            probe_point=probe_point,
+            refined_grasp_target=refined_grasp_target,
+        )
+        if features.shape[0] != self.config.condition_dim:
+            raise ValueError(f"DP input dim mismatch: expected {self.config.condition_dim}, got {features.shape[0]}")
+        condition = torch.from_numpy(features.astype(np.float32)).to(self.device).unsqueeze(0)
+        actions = self.model.sample(condition, action_low=self.action_low, action_high=self.action_high)
+        return actions.cpu().numpy()[0].astype(np.float32)
+
+
+def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: Path) -> dict:
+    from src.env.wrapper import ManiSkillAgent
+
+    seed = args.seed + episode_index
+    pseudo_blur = args.scene == "pseudo_blur"
+    blur_config = PseudoBlurConfig(enabled=pseudo_blur, seed=seed)
+    checkpoint = torch.load(Path(args.checkpoint), map_location="cpu")
+    checkpoint_action_dim = int(checkpoint["config"]["action_dim"])
+    control_mode = "pd_ee_delta_pose" if checkpoint_action_dim == 7 else None
+    agent = ManiSkillAgent(
+        env_id=args.env_id,
+        obs_mode=args.obs_mode,
+        control_mode=control_mode,
+        render_mode=None,
+        render_backend="none" if args.obs_mode == "state" else None,
+        pseudo_blur=blur_config,
+    )
+    obs = agent.reset(seed=seed)
+    device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
+    policy = DiffusionPolicyRuntime(Path(args.checkpoint), agent.env.action_space, device, args.denoise_steps)
+    tactile = ContactFeatureExtractor()
+    boundary_refiner = TactileBoundaryRefiner()
+    probe_planner = TactileProbePlanner()
+    active_perception = ActivePerceptionCoordinator(
+        ActivePerceptionConfig(
+            enabled=args.use_active_probe,
+            uncertainty_threshold=0.5,
+            probe_budget=2,
+            probe_phases=("diffusion_policy", "fallback"),
+        )
+    )
+
+    rewards = []
+    success = 0.0
+    uncertainty_values = []
+    visual_trigger_count = 0
+    tactile_contact_count = 0
+    trace_rows = []
+    action_sequence: np.ndarray | None = None
+    action_cursor = 0
+
+    for step in range(args.max_steps):
+        uncertainty = agent.get_visual_uncertainty(obs)
+        tactile_feature = tactile.extract(obs, agent.last_info)
+        oracle_state = agent.get_task_state()
+        decision = active_perception.decide(
+            step=step,
+            phase="diffusion_policy",
+            uncertainty=uncertainty,
+            tactile_feature=tactile_feature,
+        )
+        probe_plan = probe_planner.plan(
+            decision=decision.to_dict(),
+            uncertainty=uncertainty,
+            oracle_state=oracle_state,
+        )
+        refinement = boundary_refiner.update(
+            step=step,
+            decision=decision.to_dict(),
+            tactile_feature=tactile_feature,
+            visual_uncertainty=float(uncertainty["uncertainty"]),
+            probe_plan=probe_plan.to_dict(),
+            oracle_state=oracle_state,
+        )
+        if action_sequence is None or action_cursor >= min(args.replan_interval, action_sequence.shape[0]):
+            action_sequence = policy.predict_sequence(
+                obs,
+                uncertainty=float(uncertainty["uncertainty"]),
+                boundary_confidence=float(refinement.boundary_confidence),
+                dominant_reason=str(uncertainty.get("dominant_reason", "none")),
+                probe_state=float(1.0 if decision.should_probe else 0.0),
+                probe_point=np.asarray(probe_plan.probe_point, dtype=np.float32),
+                refined_grasp_target=np.asarray(
+                    refinement.refined_grasp_target if refinement.refined_grasp_target is not None else np.zeros(3),
+                    dtype=np.float32,
+                ),
+            )
+            action_cursor = 0
+        action = action_sequence[action_cursor]
+        action_cursor += 1
+        obs, reward, done, info = agent.step(action)
+
+        rewards.append(float(reward))
+        success = max(success, _success_from_info(info))
+        uncertainty_values.append(float(uncertainty["uncertainty"]))
+        visual_trigger_count += int(bool(uncertainty["triggered"]))
+        tactile_contact_count += int(tactile_feature["contact_detected"] > 0.0)
+        trace_rows.append(
+            {
+                **decision.to_dict(),
+                "boundary_confidence": refinement.boundary_confidence,
+                "post_probe_uncertainty": refinement.post_probe_uncertainty,
+                "refinement_reason": refinement.reason,
+                "probe_reason": probe_plan.reason,
+                "dominant_reason": uncertainty.get("dominant_reason", ""),
+                "reward": float(reward),
+                "visual_triggered": bool(uncertainty["triggered"]),
+            }
+        )
+        if done:
+            break
+
+    agent.close()
+    trace_path = output_dir / f"episode_{episode_index:04d}_diffusion_eval_trace.csv"
+    write_trace(trace_rows, trace_path)
+    return {
+        "episode": episode_index,
+        "seed": seed,
+        "env_id": args.env_id,
+        "obs_mode": agent.obs_mode,
+        "scene": args.scene,
+        "pseudo_blur": pseudo_blur,
+        "active_probe": bool(args.use_active_probe),
+        "policy": "diffusion",
+        "checkpoint": args.checkpoint,
+        "env_backend": agent.backend_name,
+        "init_error": agent.init_error,
+        "steps": len(rewards),
+        "total_reward": float(np.sum(rewards)) if rewards else 0.0,
+        "success": success,
+        "success_rate": success,
+        "mean_uncertainty": float(np.mean(uncertainty_values)) if uncertainty_values else 0.0,
+        "visual_trigger_count": visual_trigger_count,
+        **active_perception.summary(),
+        **boundary_refiner.summary(),
+        "tactile_contact_count": tactile_contact_count,
+        "trace_path": str(trace_path),
+        "fallback_used": bool(agent.using_mock_env or agent.obs_mode != args.obs_mode),
+        "blur_config": asdict(blur_config),
+    }
+
+
+def write_trace(rows: list[dict], trace_path: Path) -> None:
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    if not rows:
+        return
+    fieldnames = [
+        "step",
+        "phase",
+        "ambiguity_score",
+        "visual_uncertainty",
+        "tactile_confidence",
+        "state",
+        "should_probe",
+        "probe_index",
+        "reason",
+        "boundary_confidence",
+        "post_probe_uncertainty",
+        "refinement_reason",
+        "probe_reason",
+        "dominant_reason",
+        "reward",
+        "visual_triggered",
+    ]
+    with trace_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+
+
+def write_summary(rows: list[dict], output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / "diffusion_eval_results.json"
+    csv_path = output_dir / "diffusion_eval_results.csv"
+    with json_path.open("w", encoding="utf-8") as f:
+        json.dump(rows, f, ensure_ascii=False, indent=2)
+    fieldnames = [
+        "episode",
+        "seed",
+        "env_id",
+        "obs_mode",
+        "scene",
+        "pseudo_blur",
+        "active_probe",
+        "policy",
+        "checkpoint",
+        "env_backend",
+        "init_error",
+        "steps",
+        "total_reward",
+        "success",
+        "success_rate",
+        "mean_uncertainty",
+        "visual_trigger_count",
+        "decision_ambiguity_count",
+        "probe_request_count",
+        "contact_resolved_count",
+        "refinement_count",
+        "final_boundary_confidence",
+        "tactile_contact_count",
+        "trace_path",
+        "fallback_used",
+    ]
+    with csv_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+    print(f"Saved diffusion eval results: {json_path}")
+    print(f"Saved diffusion eval results: {csv_path}")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Evaluate a trained conditional Diffusion Policy.")
+    parser.add_argument("--checkpoint", default="runs/dp_mvp/diffusion_policy.pt")
+    parser.add_argument("--num-episodes", type=int, default=5)
+    parser.add_argument("--max-steps", type=int, default=120)
+    parser.add_argument("--seed", type=int, default=100)
+    parser.add_argument("--env-id", default="PickCube-v1")
+    parser.add_argument("--obs-mode", choices=["state", "rgbd"], default="rgbd")
+    parser.add_argument("--scene", choices=["clean", "pseudo_blur"], default="pseudo_blur")
+    parser.add_argument("--use-active-probe", action="store_true")
+    parser.add_argument("--output-dir", default="results/diffusion_eval")
+    parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
+    parser.add_argument("--denoise-steps", type=int, default=None)
+    parser.add_argument("--replan-interval", type=int, default=4)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    output_dir = Path(args.output_dir)
+    rows = []
+    for episode_index in range(args.num_episodes):
+        row = evaluate_episode(args, episode_index, output_dir)
+        rows.append(row)
+        print(json.dumps(row, ensure_ascii=False, indent=2))
+    write_summary(rows, output_dir)
+
+
+if __name__ == "__main__":
+    main()

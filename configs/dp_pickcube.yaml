@@ -1,0 +1,35 @@
+# Minimal full-policy configuration for GitHub/Colab verification.
+#
+# This project still uses the active-perception MVP features as policy
+# conditions. The learned policy predicts a short sequence of robot actions,
+# which is the key upgrade from single-step BC or the scripted controller.
+
+demo_dir: data/demos/pickcube_dp
+run_dir: runs/dp_mvp
+result_dir: results/dp_mvp
+
+environment:
+  env_id: PickCube-v1
+  obs_mode: rgbd
+  scene: pseudo_blur
+  use_active_probe: true
+  max_steps: 120
+  seed: 42
+
+data:
+  num_episodes: 100
+  require_success: true
+  require_policy: scripted
+
+policy:
+  horizon: 8
+  hidden_dim: 256
+  diffusion_steps: 50
+  replan_interval: 4
+
+training:
+  epochs: 50
+  batch_size: 64
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  device: cpu

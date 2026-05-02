@@ -50,6 +50,44 @@ bash scripts/run_colab_training_demo.sh
 
 如果 scripted baseline 没有成功，它会直接停下，不会继续拿失败轨迹训练。
 
+### 真实机械臂渲染入口
+
+如果你要验证完整机械臂画面，而不是 mock fallback：
+
+```bash
+bash scripts/run_render_mecharm.sh
+```
+
+结果必须满足：
+
+- `env_backend=maniskill`
+- `fallback_used=False`
+- `video_path` 指向生成的 mp4
+
+否则说明算法闭环运行了，但当前机器没有成功初始化 ManiSkill/SAPIEN 渲染。
+
+### 完整 policy 入口
+
+当前仓库增加了一个最小条件 Diffusion Policy 路线：
+
+```bash
+bash scripts/run_diffusion_policy_pipeline.sh
+```
+
+快速验证可用：
+
+```bash
+NUM_EPISODES=10 TRAIN_EPOCHS=2 DIFFUSION_STEPS=10 bash scripts/run_diffusion_policy_pipeline.sh
+```
+
+它会生成：
+
+- `runs/dp_mvp/diffusion_policy.pt`
+- `runs/dp_mvp/diffusion_metrics.json`
+- `results/dp_mvp/diffusion_eval/diffusion_eval_results.csv`
+
+这条路线才是从 scripted MVP 走向完整学习式 policy 的正式路径。
+
 ## 3. 结果文件怎么看
 
 核心结果在：
@@ -90,6 +128,12 @@ bash scripts/run_colab_training_demo.sh
 当前 BC 流程已经可以完整跑通，但不应被当成最终核心成果。更稳妥的表述是：
 
 `我们已经实现了可运行的 imitation-learning pipeline，用于后续替换 scripted controller；当前课程最终展示以 scripted active-perception MVP 为主。`
+
+### 新增完整 policy 路线
+
+新增 Diffusion Policy 框架后，可以更准确地表述为：
+
+`我们已经实现了从主动感知 scripted MVP 到 sequence-level learned policy 的最小训练/评估路径；最终性能需要依赖更多真实 ManiSkill 成功 demonstrations。`
 
 ## 5. 最终答辩/报告建议说法
 
