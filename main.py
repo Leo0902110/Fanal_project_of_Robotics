@@ -60,7 +60,7 @@ def run_episode(
         ActivePerceptionConfig(enabled=active_probe, uncertainty_threshold=0.5, probe_budget=2)
     )
     effective_policy_name = policy_name
-    scripted_ready = policy_name == "scripted" and agent.obs_mode != "state"
+    scripted_ready = policy_name == "scripted" and (agent.obs_mode != "state" or agent.using_mock_env)
     if policy_name == "scripted" and not scripted_ready:
         effective_policy_name = "sine_fallback"
 
@@ -164,6 +164,8 @@ def run_episode(
         "active_probe": active_probe,
         "requested_policy": policy_name,
         "effective_policy": effective_policy_name,
+        "env_backend": agent.backend_name,
+        "init_error": agent.init_error,
         "steps": len(rewards),
         "total_reward": float(np.sum(rewards)) if rewards else 0.0,
         "success": success,
@@ -176,7 +178,9 @@ def run_episode(
         "tactile_contact_count": tactile_contact_count,
         "video_path": video_path,
         "decision_trace_path": str(trace_path),
-        "fallback_used": bool(agent.obs_mode != obs_mode or effective_policy_name != policy_name),
+        "fallback_used": bool(
+            agent.using_mock_env or agent.obs_mode != obs_mode or effective_policy_name != policy_name
+        ),
         "blur_config": asdict(blur_config),
     }
 
@@ -234,6 +238,8 @@ def write_results(rows: list[dict], output_dir: Path) -> None:
         "active_probe",
         "requested_policy",
         "effective_policy",
+        "env_backend",
+        "init_error",
         "steps",
         "total_reward",
         "success",

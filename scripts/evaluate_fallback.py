@@ -121,6 +121,8 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         "active_probe": bool(args.use_active_probe),
         "policy": "fallback",
         "checkpoint": "",
+        "env_backend": agent.backend_name,
+        "init_error": agent.init_error,
         "steps": len(rewards),
         "total_reward": float(np.sum(rewards)) if rewards else 0.0,
         "success": success,
@@ -131,7 +133,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         **boundary_refiner.summary(),
         "tactile_contact_count": tactile_contact_count,
         "trace_path": str(trace_path),
-        "fallback_used": bool(agent.obs_mode != args.obs_mode),
+        "fallback_used": bool(agent.using_mock_env or agent.obs_mode != args.obs_mode),
         "blur_config": asdict(blur_config),
     }
 
@@ -180,6 +182,8 @@ def write_summary(rows: list[dict], output_dir: Path) -> None:
         "active_probe",
         "policy",
         "checkpoint",
+        "env_backend",
+        "init_error",
         "steps",
         "total_reward",
         "success",

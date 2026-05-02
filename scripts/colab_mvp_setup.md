@@ -110,6 +110,12 @@ results/bc_vtabr/bc_eval/bc_eval_results.csv
 results/bc_vtabr/fallback_eval/fallback_eval_results.csv
 ```
 
+请额外关注结果里的 `env_backend` 列：
+
+- `maniskill` 表示真 ManiSkill 环境已正常使用
+- `maniskill_state_fallback` 表示只退到了 state 版本
+- `mock` 表示 RGBD 初始化失败后，为了保留完整视觉主动感知训练链而使用了 mock fallback
+
 ## 8. 专门渲染机械臂视频
 
 如果目标是生成 ManiSkill/SAPIEN 中 Panda 机械臂的 MP4 展示视频，请打开项目根目录下的：

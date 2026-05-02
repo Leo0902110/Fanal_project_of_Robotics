@@ -54,7 +54,7 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
     )
 
     effective_policy = args.policy
-    if args.policy == "scripted" and agent.obs_mode == "state":
+    if args.policy == "scripted" and agent.obs_mode == "state" and not agent.using_mock_env:
         effective_policy = "sine_fallback"
 
     if effective_policy == "scripted":
@@ -160,9 +160,13 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
         "active_probe": active_probe,
         "requested_policy": args.policy,
         "effective_policy": effective_policy,
+        "env_backend": agent.backend_name,
+        "init_error": agent.init_error,
         "success": success,
         "steps": len(rewards),
-        "fallback_used": bool(agent.obs_mode != args.obs_mode or effective_policy != args.policy),
+        "fallback_used": bool(
+            agent.using_mock_env or agent.obs_mode != args.obs_mode or effective_policy != args.policy
+        ),
         "blur_config": asdict(blur_config),
         **active_perception.summary(),
         **boundary_refiner.summary(),

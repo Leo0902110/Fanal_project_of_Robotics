@@ -81,4 +81,8 @@ results/colab_vtabr/fallback_eval/fallback_eval_results.csv
 
 - 这个入口优先保证 Colab 上“完整训练演示”跑通。
 - 如果 ManiSkill 渲染或设备初始化失败，当前代码会优先保证训练闭环不断，而不是直接中断整个流程。
+- 结果里请重点看 `env_backend`：
+  - `maniskill`：真 ManiSkill 环境
+  - `maniskill_state_fallback`：退成了 ManiSkill state 模式
+  - `mock`：为了保留 RGBD 主线而使用了 mock fallback
 - 真正要做最终课程展示时，再单独打开 `Robotics_Project_Colab_Render_MechArm.ipynb` 处理机械臂视频渲染。

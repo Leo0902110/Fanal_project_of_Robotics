@@ -46,6 +46,8 @@ class ManiSkillAgent:
         self.pseudo_blur = pseudo_blur or PseudoBlurConfig(enabled=False)
         self.detector = VisualUncertaintyDetector(threshold=uncertainty_threshold)
         self.using_mock_env = False
+        self.backend_name = "unknown"
+        self.init_error = ""
         kwargs = {"obs_mode": obs_mode}
         if render_mode is not None:
             kwargs["render_mode"] = render_mode
@@ -58,23 +60,32 @@ class ManiSkillAgent:
         if gym is not None and mani_skill:
             try:
                 self.env = gym.make(env_id, **kwargs)
+                self.backend_name = "maniskill"
                 print(f"环境 {env_id} 初始化成功，obs_mode={obs_mode}")
             except Exception as exc:
+                self.init_error = str(exc)
                 print(f"环境 {env_id} 初始化失败：{exc}")
 
-        if self.env is None and gym is not None and mani_skill:
+        requested_state = obs_mode == "state"
+        if self.env is None and requested_state and gym is not None and mani_skill:
             try:
                 print("回退至 PickCube-v1 + state + 无渲染模式，确保 smoke test 能继续。")
                 self.obs_mode = "state"
                 self.render_mode = None
                 self.render_backend = "none"
                 self.env = gym.make("PickCube-v1", obs_mode="state", render_backend="none")
+                self.backend_name = "maniskill_state_fallback"
             except Exception as exc:
                 print(f"ManiSkill state fallback 初始化仍失败：{exc}")
+                self.init_error = self.init_error or str(exc)
 
         if self.env is None:
             self.using_mock_env = True
-            print("启用 MockGraspEnv fallback，确保 demo/train/eval 链路可继续。")
+            self.backend_name = "mock"
+            if not requested_state:
+                print("RGBD ManiSkill 初始化失败，启用 MockGraspEnv RGBD fallback，保留视觉主动感知训练链。")
+            else:
+                print("启用 MockGraspEnv fallback，确保 demo/train/eval 链路可继续。")
             self.env = MockGraspEnv(
                 MockSceneConfig(
                     obs_mode=self.obs_mode,
