@@ -2,6 +2,7 @@
 .venv/
 venv/
 env/
+.conda-robotics/
 
 # Python cache and build artifacts
 __pycache__/
@@ -33,8 +34,19 @@ htmlcov/
 
 # Training / experiment outputs
 results/
+runs/
+videos/
+data/demos/
 checkpoints/
 wandb/
+*.mp4
+*.avi
+*.mov
+
+# Large model artifacts
+*.pt
+*.pth
+*.ckpt
 
 # OS / editor files
 .DS_Store

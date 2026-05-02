@@ -3,7 +3,11 @@
 # A: integration, simulator, visualization, and experiment tracking.
 seaborn>=0.13
 opencv-python>=4.9
+# PyPI package name is `open3d`. Install with Python 3.10-3.12;
+# Python 3.13 currently has no official wheel on PyPI.
 open3d>=0.18
 wandb>=0.17
 sapien
 mani_skill
+# Needed by ManiSkill Panda end-effector controllers used by ScriptedPickCubePolicy.
+pin
