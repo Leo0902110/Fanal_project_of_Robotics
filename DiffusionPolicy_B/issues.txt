@@ -1,0 +1,20 @@
+如果在虚拟环境(.venv)终端运行:
+python examples/visualize_sim.py
+出现以下可能报错:
+AssertionError: Torch not compiled with CUDA enabled
+可以通过以下方法检查是否连接上GPU:
+python -c "import torch; print(torch.cuda.is_available())"
+
+请务必返回True
+
+如是False的话，可能需要在虚拟环境(.venv)终端进行以下操作:
+1. 彻底清除现有的 PyTorch:
+pip uninstall torch torchvision torchaudio -y
+
+2. 强制安装 CUDA 12.4 专用版
+使用 PyTorch 官方提供的仓库地址。这会直接下载约 2GB 的 GPU 版安装包。在中国大陆，官方 CDN 现在的速度通常很稳定:
+pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/cu124
+
+等待安装完毕，请返回去验证GPU的连接
+也可以进行一个现场的验证:
+python -c "import torch; print(f'CUDA 是否可用: {torch.cuda.is_available()}'); print(f'显卡名称: {torch.cuda.get_device_name(0)}' if torch.cuda.is_available() else '未找到显卡')"
