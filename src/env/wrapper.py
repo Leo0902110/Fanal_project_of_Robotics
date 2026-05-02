@@ -76,6 +76,23 @@ class ManiSkillAgent:
         """视觉伪模糊检测 (Visual Pseudo-blur)"""
         return self.detector.estimate(obs)
 
+    def get_task_state(self):
+        env = getattr(self.env, "unwrapped", self.env)
+
+        def to_numpy(value):
+            if value is None:
+                return None
+            if isinstance(value, torch.Tensor):
+                value = value.detach().cpu().numpy()
+            return np.asarray(value, dtype=np.float32)
+
+        state = {}
+        if hasattr(env, "cube"):
+            state["obj_pos"] = to_numpy(env.cube.pose.p)
+        if hasattr(env, "goal_site"):
+            state["goal_pos"] = to_numpy(env.goal_site.pose.p)
+        return state
+
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
         self.last_info = self._process_info(info)

@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from src.env.wrapper import ManiSkillAgent
-from src.models import ActivePerceptionPolicy, SineProbePolicy
+from src.models import ActivePerceptionPolicy, ScriptedPickCubePolicy, SineProbePolicy
 from src.perception import PseudoBlurConfig
 from src.tactile import ContactFeatureExtractor
 
@@ -34,21 +34,27 @@ def run_episode(
     active_probe: bool,
     seed: int,
     save_video: bool,
+    policy_name: str,
 ) -> dict:
     blur_config = PseudoBlurConfig(enabled=pseudo_blur, seed=seed)
     render_mode = "rgb_array" if save_video else None
     render_backend = None if save_video else "none"
+    control_mode = "pd_ee_delta_pose" if policy_name == "scripted" else None
     agent = ManiSkillAgent(
         env_id=env_id,
         obs_mode=obs_mode,
+        control_mode=control_mode,
         render_mode=render_mode,
         render_backend=render_backend,
         pseudo_blur=blur_config,
     )
     obs = agent.reset(seed=seed)
     tactile = ContactFeatureExtractor()
-    base_policy = SineProbePolicy(agent.env.action_space)
-    policy = ActivePerceptionPolicy(base_policy, agent.env.action_space) if active_probe else base_policy
+    if policy_name == "scripted":
+        policy = ScriptedPickCubePolicy(agent.env.action_space, use_active_probe=active_probe)
+    else:
+        base_policy = SineProbePolicy(agent.env.action_space)
+        policy = ActivePerceptionPolicy(base_policy, agent.env.action_space) if active_probe else base_policy
 
     rewards = []
     uncertainty_values = []
@@ -63,6 +69,7 @@ def run_episode(
             "active_probe": active_probe and bool(uncertainty["triggered"]),
             "uncertainty": uncertainty,
             "tactile": tactile_feature,
+            "oracle": agent.get_task_state(),
         }
         action = policy.predict(obs, step=step, context=context)
         obs, reward, done, info = agent.step(action)
@@ -151,6 +158,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=120)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output-dir", default="results/mvp")
+    parser.add_argument("--policy", choices=["sine", "scripted"], default="scripted")
     parser.add_argument("--no-video", action="store_true", help="Disable video export for faster Colab runs.")
     return parser.parse_args()
 
@@ -161,7 +169,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rows = []
-    for idx, config in enumerate(build_experiments(args.mode)):
+    for config in build_experiments(args.mode):
         print(f"\n开始实验：{config['name']}")
         row = run_episode(
             name=config["name"],
@@ -171,8 +179,9 @@ def main() -> None:
             output_dir=output_dir,
             pseudo_blur=config["pseudo_blur"],
             active_probe=config["active_probe"],
-            seed=args.seed + idx,
+            seed=args.seed,
             save_video=not args.no_video,
+            policy_name=args.policy,
         )
         rows.append(row)
         print(json.dumps(row, ensure_ascii=False, indent=2))

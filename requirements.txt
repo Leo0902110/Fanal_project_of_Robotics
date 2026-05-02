@@ -1,7 +1,7 @@
 # Shared base environment for all members.
 # Install this first, then install role-specific requirements only when needed.
 
-numpy>=1.26,<2.0
+numpy>=1.26,<2.3
 scipy>=1.11
 pandas>=2.2
 matplotlib>=3.8
@@ -14,4 +14,3 @@ einops>=0.7
 hydra-core>=1.3
 tensorboard>=2.16
 gymnasium>=0.29
-

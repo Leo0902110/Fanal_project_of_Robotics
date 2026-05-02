@@ -78,6 +78,12 @@ class VisualUncertaintyDetector:
     def __init__(self, threshold: float = 0.18):
         self.threshold = threshold
 
+    def _normalize_depth_units(self, depth: np.ndarray) -> np.ndarray:
+        depth = np.asarray(depth, dtype=np.float32)
+        if depth.size and np.nanmax(depth) > 20.0:
+            return depth / 1000.0
+        return depth
+
     def estimate(self, obs: Any) -> dict[str, float | bool]:
         depth = find_depth_array(obs)
         if depth is None:
@@ -88,7 +94,7 @@ class VisualUncertaintyDetector:
                 "triggered": False,
             }
 
-        depth = np.asarray(depth, dtype=np.float32)
+        depth = self._normalize_depth_units(depth)
         valid = np.isfinite(depth) & (depth > 0)
         missing_ratio = float(1.0 - valid.mean()) if depth.size else 1.0
 
@@ -96,12 +102,13 @@ class VisualUncertaintyDetector:
             values = depth[valid]
             mean = float(np.mean(values))
             variance = float(np.var(values))
-            normalized_variance = variance / (mean * mean + 1e-6)
         else:
             variance = 0.0
-            normalized_variance = 1.0
 
-        uncertainty = float(np.clip(0.65 * normalized_variance + 0.35 * missing_ratio, 0.0, 1.0))
+        # For the MVP, pseudo-blur is simulated mostly as depth dropout. Global
+        # depth variance is dominated by camera perspective/background distance,
+        # so it is reported but not used as the primary trigger.
+        uncertainty = float(np.clip(missing_ratio / 0.12, 0.0, 1.0))
         return {
             "uncertainty": uncertainty,
             "depth_variance": variance,
