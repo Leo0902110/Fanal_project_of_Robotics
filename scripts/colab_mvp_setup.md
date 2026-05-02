@@ -50,13 +50,13 @@ else:
 ## 5. 跑 RGBD MVP 实验
 
 ```python
-!python main.py --mode mvp --obs-mode rgbd --max-steps 120 --output-dir results/mvp
+!python main.py --mode mvp --obs-mode rgbd --policy scripted --max-steps 120 --output-dir results/mvp
 ```
 
 如果 Colab 的 Vulkan/RGBD 渲染失败，先退回 state 版本：
 
 ```python
-!python main.py --mode mvp --obs-mode state --max-steps 120 --no-video --output-dir results/mvp_state
+!python main.py --mode mvp --obs-mode state --policy scripted --max-steps 120 --no-video --output-dir results/mvp_state
 ```
 
 ## 6. 跑完整 BC 训练链
@@ -66,6 +66,8 @@ else:
 ```python
 !bash scripts/run_colab_training_demo.sh
 ```
+
+这个脚本会先验证 scripted baseline 是否至少出现成功轨迹，再继续进入训练链。
 
 更短的专用说明见：
 
@@ -77,6 +79,8 @@ scripts/colab_training_demo.md
 
 ```python
 !bash scripts/run_bc_pipeline.sh
+
+这个训练链内部会显式使用 `--policy scripted` 采集 demo，避免把失败轨迹当作示范数据。
 ```
 
 如果你想先缩短验证时间，可以减少 episode 和 epoch：

@@ -53,15 +53,30 @@ if [[ "${RUN_MVP_BASELINES}" == "1" ]]; then
   "${PYTHON_BIN}" main.py \
     --mode mvp \
     --obs-mode rgbd \
+    --policy scripted \
     --max-steps "${MAX_STEPS}" \
     --no-video \
     --output-dir "${RESULT_DIR}/mvp_rgbd" || \
   "${PYTHON_BIN}" main.py \
     --mode mvp \
     --obs-mode state \
+    --policy scripted \
     --max-steps "${MAX_STEPS}" \
     --no-video \
     --output-dir "${RESULT_DIR}/mvp_state"
+  if [[ -f "${RESULT_DIR}/mvp_rgbd/mvp_results.json" ]]; then
+    "${PYTHON_BIN}" scripts/validate_outputs.py \
+      mvp-results \
+      --path "${RESULT_DIR}/mvp_rgbd/mvp_results.json" \
+      --min-success 0.1 \
+      --require-policy scripted
+  else
+    "${PYTHON_BIN}" scripts/validate_outputs.py \
+      mvp-results \
+      --path "${RESULT_DIR}/mvp_state/mvp_results.json" \
+      --min-success 0.1 \
+      --require-policy scripted
+  fi
 fi
 
 echo "[Colab 5/6] BC pipeline"

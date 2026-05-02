@@ -19,9 +19,15 @@ rm -rf "${RUN_DIR}" "${RESULT_DIR}"
   --num-episodes "${NUM_EPISODES}" \
   --max-steps "${MAX_STEPS}" \
   --scene pseudo_blur \
+  --policy scripted \
   --use-active-probe \
   --clear-output-dir \
   --output-dir "${DEMO_DIR}"
+"${PYTHON_BIN}" scripts/validate_outputs.py \
+  manifest \
+  --path "${DEMO_DIR}/manifest.json" \
+  --min-mean-success 0.5 \
+  --require-policy scripted
 
 echo "[3/5] Train BC"
 "${PYTHON_BIN}" scripts/train_bc.py \

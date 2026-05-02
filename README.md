@@ -93,6 +93,18 @@ observation-policy-action interface needed by a later DP implementation.
 
 ## Quick Start
 
+Recommended final-deliverable entry:
+
+```bash
+bash scripts/run_final_submission.sh
+```
+
+Chinese delivery notes:
+
+```text
+FINAL_PROJECT_DELIVERABLE.md
+```
+
 Install the base dependencies first:
 
 ```bash
@@ -186,7 +198,7 @@ python scripts/plot_results.py --results-dir results/local_mvp_rgbd
 Collect active-perception demonstrations for future BC/DP training:
 
 ```bash
-python scripts/collect_demos.py --num-episodes 5 --scene pseudo_blur --use-active-probe --output-dir data/demos/pickcube_mvp
+python scripts/collect_demos.py --num-episodes 5 --scene pseudo_blur --policy scripted --use-active-probe --output-dir data/demos/pickcube_mvp
 ```
 
 Train a minimal behavior cloning baseline:
@@ -200,6 +212,10 @@ Run the end-to-end BC pipeline:
 ```bash
 bash scripts/run_bc_pipeline.sh
 ```
+
+The pipeline now validates that collected demos come from successful
+`--policy scripted` rollouts before training starts. If the scripted baseline is
+not succeeding, the script exits early instead of training on bad trajectories.
 
 Use a specific interpreter when needed:
 
