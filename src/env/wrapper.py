@@ -21,6 +21,52 @@ except Exception:
 else:
     mani_skill = True
 
+if mani_skill:
+    try:
+        import sapien
+        from mani_skill.utils.structs.actor import Actor as ManiSkillActor
+    except Exception:
+        ManiSkillActor = None
+    else:
+        if not getattr(ManiSkillActor, "_codex_safe_visibility_patch", False):
+            def _safe_hide_visual(self):
+                assert not self.has_collision_shapes
+                if self.hidden:
+                    return
+                if self.scene.gpu_sim_enabled:
+                    self.before_hide_pose = self.pose.raw_pose.clone()
+                    temp_pose = self.pose.raw_pose
+                    temp_pose[..., :3] += 99999
+                    self.pose = temp_pose
+                    self.px.gpu_apply_rigid_dynamic_data()
+                    self.px.gpu_fetch_rigid_dynamic_data()
+                else:
+                    for obj in self._objs:
+                        render_body = obj.find_component_by_type(sapien.render.RenderBodyComponent)
+                        if render_body is not None:
+                            render_body.visibility = 0
+                self.hidden = True
+
+            def _safe_show_visual(self):
+                assert not self.has_collision_shapes
+                if not self.hidden:
+                    return
+                self.hidden = False
+                if self.scene.gpu_sim_enabled:
+                    if hasattr(self, "before_hide_pose"):
+                        self.pose = self.before_hide_pose
+                        self.px.gpu_apply_rigid_dynamic_data()
+                        self.px.gpu_fetch_rigid_dynamic_data()
+                else:
+                    for obj in self._objs:
+                        render_body = obj.find_component_by_type(sapien.render.RenderBodyComponent)
+                        if render_body is not None:
+                            render_body.visibility = 1
+
+            ManiSkillActor.hide_visual = _safe_hide_visual
+            ManiSkillActor.show_visual = _safe_show_visual
+            ManiSkillActor._codex_safe_visibility_patch = True
+
 from src.perception import PseudoBlurConfig, VisualUncertaintyDetector, apply_pseudo_blur
 from src.env.mock_env import MockGraspEnv, MockSceneConfig
 
