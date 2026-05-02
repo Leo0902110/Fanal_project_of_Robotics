@@ -40,6 +40,7 @@ class BCPolicyRuntime:
         self.model.eval()
         self.action_space = action_space
         self.device = device
+        self.checkpoint_args = checkpoint.get("args", {})
 
     def predict(
         self,
@@ -67,6 +68,11 @@ class BCPolicyRuntime:
             action = self.model(torch.from_numpy(features).to(self.device).unsqueeze(0)).cpu().numpy()[0]
         if action.shape[0] != self.action_dim:
             raise ValueError(f"BC action dim mismatch: expected {self.action_dim}, got {action.shape[0]}")
+        if self.action_space.shape is not None and action.shape[0] != self.action_space.shape[0]:
+            raise ValueError(
+                "BC action space mismatch between checkpoint and evaluation env. "
+                f"Checkpoint action_dim={action.shape[0]}, env action_dim={self.action_space.shape[0]}."
+            )
         return np.clip(action.astype(np.float32), self.action_space.low, self.action_space.high)
 
 
@@ -76,10 +82,13 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
     seed = args.seed + episode_index
     pseudo_blur = args.scene == "pseudo_blur"
     blur_config = PseudoBlurConfig(enabled=pseudo_blur, seed=seed)
+    checkpoint = torch.load(Path(args.checkpoint), map_location="cpu")
+    checkpoint_action_dim = int(checkpoint["action_dim"])
+    control_mode = "pd_ee_delta_pose" if checkpoint_action_dim == 7 else None
     agent = ManiSkillAgent(
         env_id=args.env_id,
         obs_mode=args.obs_mode,
-        control_mode=None,
+        control_mode=control_mode,
         render_mode=None,
         render_backend="none" if args.obs_mode == "state" else None,
         pseudo_blur=blur_config,
