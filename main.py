@@ -8,9 +8,10 @@ from pathlib import Path
 
 import numpy as np
 
+from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator
 from src.models import ActivePerceptionPolicy, ScriptedPickCubePolicy, SineProbePolicy
 from src.perception import PseudoBlurConfig
-from src.tactile import ContactFeatureExtractor
+from src.tactile import ContactFeatureExtractor, TactileBoundaryRefiner
 
 
 def _success_from_info(info: dict) -> float:
@@ -53,13 +54,17 @@ def run_episode(
 
     obs = agent.reset(seed=seed)
     tactile = ContactFeatureExtractor()
+    boundary_refiner = TactileBoundaryRefiner()
+    active_perception = ActivePerceptionCoordinator(
+        ActivePerceptionConfig(enabled=active_probe, uncertainty_threshold=0.5, probe_budget=2)
+    )
     effective_policy_name = policy_name
     scripted_ready = policy_name == "scripted" and agent.obs_mode != "state"
     if policy_name == "scripted" and not scripted_ready:
         effective_policy_name = "sine_fallback"
 
     if effective_policy_name == "scripted":
-        policy = ScriptedPickCubePolicy(agent.env.action_space, use_active_probe=active_probe)
+        policy = ScriptedPickCubePolicy(agent.env.action_space, use_active_probe=active_probe, probe_steps=2)
     else:
         base_policy = SineProbePolicy(agent.env.action_space)
         policy = ActivePerceptionPolicy(base_policy, agent.env.action_space) if active_probe else base_policy
@@ -69,15 +74,32 @@ def run_episode(
     visual_trigger_count = 0
     tactile_contact_count = 0
     success = 0.0
+    decision_trace = []
 
     for step in range(max_steps):
         uncertainty = agent.get_visual_uncertainty(obs)
         tactile_feature = tactile.extract(obs, agent.last_info)
+        policy_phase = str(getattr(policy, "phase", "fallback"))
+        decision = active_perception.decide(
+            step=step,
+            phase=policy_phase,
+            uncertainty=uncertainty,
+            tactile_feature=tactile_feature,
+        )
+        refinement = boundary_refiner.update(
+            step=step,
+            decision=decision.to_dict(),
+            tactile_feature=tactile_feature,
+            visual_uncertainty=float(uncertainty["uncertainty"]),
+        )
         context = {
-            "active_probe": active_probe and bool(uncertainty["triggered"]),
+            "active_probe": bool(decision.should_probe),
             "uncertainty": uncertainty,
             "mean_uncertainty": float(uncertainty["uncertainty"]),
             "tactile": tactile_feature,
+            "active_perception": decision.to_dict(),
+            "boundary_refinement": refinement.to_dict(),
+            "post_probe_uncertainty": refinement.post_probe_uncertainty,
             "oracle": agent.get_task_state(),
         }
         action = policy.predict(obs, step=step, context=context)
@@ -88,6 +110,20 @@ def run_episode(
         visual_trigger_count += int(bool(uncertainty["triggered"]))
         tactile_contact_count += int(tactile_feature["contact_detected"] > 0.0)
         success = max(success, _success_from_info(info))
+        decision_trace.append(
+            {
+                **decision.to_dict(),
+                "refined": refinement.refined,
+                "boundary_confidence": refinement.boundary_confidence,
+                "confidence_delta": refinement.confidence_delta,
+                "post_probe_uncertainty": refinement.post_probe_uncertainty,
+                "refinement_reason": refinement.reason,
+                "reward": reward,
+                "visual_triggered": bool(uncertainty["triggered"]),
+                "contact_detected": tactile_feature["contact_detected"],
+                "contact_strength": tactile_feature["contact_strength"],
+            }
+        )
         if done:
             break
 
@@ -97,8 +133,12 @@ def run_episode(
         saved = agent.save_video(str(candidate))
         video_path = saved or ""
     agent.close()
+    trace_path = output_dir / f"{name}_decision_trace.csv"
+    write_decision_trace(decision_trace, trace_path)
 
     trigger_count = int(getattr(policy, "probe_count", 0))
+    decision_summary = active_perception.summary()
+    refinement_summary = boundary_refiner.summary()
     return {
         "experiment": name,
         "condition": condition,
@@ -115,11 +155,45 @@ def run_episode(
         "mean_uncertainty": float(np.mean(uncertainty_values)) if uncertainty_values else 0.0,
         "trigger_count": trigger_count,
         "visual_trigger_count": visual_trigger_count,
+        **decision_summary,
+        **refinement_summary,
         "tactile_contact_count": tactile_contact_count,
         "video_path": video_path,
+        "decision_trace_path": str(trace_path),
         "fallback_used": bool(agent.obs_mode != obs_mode or effective_policy_name != policy_name),
         "blur_config": asdict(blur_config),
     }
+
+
+def write_decision_trace(rows: list[dict], trace_path: Path) -> None:
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    if not rows:
+        return
+    fieldnames = [
+        "step",
+        "phase",
+        "ambiguity_score",
+        "visual_uncertainty",
+        "tactile_confidence",
+        "state",
+        "should_probe",
+        "probe_index",
+        "reason",
+        "refined",
+        "boundary_confidence",
+        "confidence_delta",
+        "post_probe_uncertainty",
+        "refinement_reason",
+        "reward",
+        "visual_triggered",
+        "contact_detected",
+        "contact_strength",
+    ]
+    with trace_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
 
 
 def write_results(rows: list[dict], output_dir: Path) -> None:
@@ -146,8 +220,14 @@ def write_results(rows: list[dict], output_dir: Path) -> None:
         "mean_uncertainty",
         "trigger_count",
         "visual_trigger_count",
+        "decision_ambiguity_count",
+        "probe_request_count",
+        "contact_resolved_count",
+        "refinement_count",
+        "final_boundary_confidence",
         "tactile_contact_count",
         "video_path",
+        "decision_trace_path",
         "fallback_used",
     ]
     with csv_path.open("w", encoding="utf-8", newline="") as f:

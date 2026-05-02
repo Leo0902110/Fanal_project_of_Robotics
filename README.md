@@ -32,9 +32,48 @@ visual uncertainty as a trigger for active probing.
 The loop is:
 
 1. Run RGB-D observation through a pseudo-blur uncertainty detector.
-2. If uncertainty is high, execute a short probing motion during approach.
-3. Continue the scripted grasp state machine.
-4. Log success, reward, uncertainty, and probing statistics.
+2. Convert visual uncertainty plus tactile/contact confidence into a decision
+   ambiguity score.
+3. If ambiguity is high and the probing budget is available, request a short
+   tactile-style probing motion.
+4. Convert the probe/contact outcome into a lightweight boundary confidence
+   update.
+5. Continue the grasp policy with the updated active-perception context.
+6. Log success, reward, uncertainty, probing statistics, boundary confidence,
+   and the decision trace.
+
+## Active Perception Skeleton
+
+The decision-to-probing flow is implemented as a lightweight coordinator in
+`src/active_perception/pipeline.py`.
+
+It has three explicit responsibilities:
+
+- Estimate whether the current action decision is ambiguous.
+- Decide whether the system should spend one probing step.
+- Record the reason for each decision so the experiment is auditable.
+
+The coordinator outputs an `ActivePerceptionDecision` object with:
+
+- `ambiguity_score`
+- `visual_uncertainty`
+- `tactile_confidence`
+- `state`
+- `should_probe`
+- `reason`
+
+This object is passed into the policy through the normal `context` dictionary.
+The policy only needs to consume `context["active_probe"]`; richer policy or DP
+implementations can later use the full `context["active_perception"]` payload.
+
+After a probe request, `src/tactile/boundary.py` computes a lightweight
+`BoundaryRefinement` update. In the MVP fallback path this is a structured
+confidence signal rather than a true tactile image boundary, but it establishes
+the final feedback link:
+
+```text
+decision ambiguity -> tactile probe -> boundary confidence -> updated context
+```
 
 ## Current Policy
 
@@ -103,6 +142,12 @@ The summary chart is saved to:
 results/mvp_performance_chart.png
 ```
 
+The decision-flow chart is saved to:
+
+```text
+results/mvp_decision_flow_chart.png
+```
+
 ## Manual Commands
 
 Clean baseline:
@@ -129,12 +174,25 @@ Plot results:
 python scripts/plot_results.py --results-dir results/local_mvp_rgbd
 ```
 
+Collect active-perception demonstrations for future BC/DP training:
+
+```bash
+python scripts/collect_demos.py --num-episodes 5 --scene pseudo_blur --use-active-probe --output-dir data/demos/pickcube_mvp
+```
+
+Train a minimal behavior cloning baseline:
+
+```bash
+python scripts/train_bc.py --demo-dir data/demos/pickcube_mvp --output-dir runs/bc_mvp
+```
+
 ## Outputs
 
 Each experiment directory contains:
 
 - `mvp_results.csv`
 - `mvp_results.json`
+- `<experiment>_decision_trace.csv`
 
 The CSV includes:
 
@@ -144,6 +202,11 @@ The CSV includes:
 - `trigger_count`
 - `visual_trigger_count`
 - `mean_uncertainty`
+- `decision_ambiguity_count`
+- `probe_request_count`
+- `contact_resolved_count`
+- `refinement_count`
+- `final_boundary_confidence`
 - `tactile_contact_count`
 - `requested_policy`
 - `effective_policy`
@@ -153,16 +216,57 @@ The CSV includes:
 the policy. `visual_trigger_count` is the number of steps where the visual
 uncertainty detector fired.
 
+The decision trace CSV records the step-level flow from ambiguity detection to
+probe request. It is useful for debugging and for explaining why active probing
+was or was not triggered in a run.
+
+Trace rows also include `boundary_confidence`, `confidence_delta`, and
+`post_probe_uncertainty`, which show how the tactile probing skeleton feeds back
+into later decisions.
+
+## Toward Training
+
+The next step toward a trained policy is demonstration collection. The script
+`scripts/collect_demos.py` writes compressed `.npz` episodes under
+`data/demos/`, with:
+
+- flattened observations
+- actions
+- rewards and dones
+- visual uncertainty
+- boundary confidence
+- active-perception decision trace
+- metadata for scene, policy, fallback status, and success
+
+These files can be loaded with `src/data/dataset.py`. The intended progression
+is:
+
+1. Collect scripted or fallback demonstrations.
+2. Train a behavior cloning baseline on `(observation, action)` pairs.
+3. Add uncertainty and boundary-confidence features.
+4. Replace the BC baseline with a Diffusion Policy once the data path is stable.
+
+The current BC baseline already appends `uncertainty` and
+`boundary_confidence` to the flattened observation vector:
+
+```text
+[flattened_observation, uncertainty, boundary_confidence] -> action
+```
+
 ## Repository Layout
 
 ```text
 main.py
 src/
+  active_perception/pipeline.py
   env/wrapper.py
   models/policies.py
   perception/pseudo_blur.py
+  tactile/boundary.py
   tactile/contact.py
 scripts/
+  collect_demos.py
+  train_bc.py
   run_local_mvp.sh
   plot_results.py
 requirements.txt
