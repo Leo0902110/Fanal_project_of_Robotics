@@ -1,10 +1,28 @@
 import numpy as np
-import torch
-import gymnasium as gym
-import imageio.v2 as imageio
-import mani_skill.envs
+try:
+    import imageio.v2 as imageio
+except Exception:
+    imageio = None
+
+try:
+    import torch
+except Exception:
+    torch = None
+
+try:
+    import gymnasium as gym
+except Exception:
+    gym = None
+
+try:
+    import mani_skill.envs  # noqa: F401
+except Exception:
+    mani_skill = None
+else:
+    mani_skill = True
 
 from src.perception import PseudoBlurConfig, VisualUncertaintyDetector, apply_pseudo_blur
+from src.env.mock_env import MockGraspEnv, MockSceneConfig
 
 class ManiSkillAgent:
     """
@@ -27,6 +45,7 @@ class ManiSkillAgent:
         self.render_backend = render_backend
         self.pseudo_blur = pseudo_blur or PseudoBlurConfig(enabled=False)
         self.detector = VisualUncertaintyDetector(threshold=uncertainty_threshold)
+        self.using_mock_env = False
         kwargs = {"obs_mode": obs_mode}
         if render_mode is not None:
             kwargs["render_mode"] = render_mode
@@ -34,16 +53,35 @@ class ManiSkillAgent:
             kwargs["render_backend"] = render_backend
         if control_mode:
             kwargs["control_mode"] = control_mode
-        try:
-            self.env = gym.make(env_id, **kwargs)
-            print(f"环境 {env_id} 初始化成功，obs_mode={obs_mode}")
-        except Exception as exc:
-            print(f"环境 {env_id} 初始化失败：{exc}")
-            print("回退至 PickCube-v1 + state + 无渲染模式，确保 Colab smoke test 能继续。")
-            self.obs_mode = "state"
-            self.render_mode = None
-            self.render_backend = "none"
-            self.env = gym.make("PickCube-v1", obs_mode="state", render_backend="none")
+
+        self.env = None
+        if gym is not None and mani_skill:
+            try:
+                self.env = gym.make(env_id, **kwargs)
+                print(f"环境 {env_id} 初始化成功，obs_mode={obs_mode}")
+            except Exception as exc:
+                print(f"环境 {env_id} 初始化失败：{exc}")
+
+        if self.env is None and gym is not None and mani_skill:
+            try:
+                print("回退至 PickCube-v1 + state + 无渲染模式，确保 smoke test 能继续。")
+                self.obs_mode = "state"
+                self.render_mode = None
+                self.render_backend = "none"
+                self.env = gym.make("PickCube-v1", obs_mode="state", render_backend="none")
+            except Exception as exc:
+                print(f"ManiSkill state fallback 初始化仍失败：{exc}")
+
+        if self.env is None:
+            self.using_mock_env = True
+            print("启用 MockGraspEnv fallback，确保 demo/train/eval 链路可继续。")
+            self.env = MockGraspEnv(
+                MockSceneConfig(
+                    obs_mode=self.obs_mode,
+                    pseudo_blur_enabled=self.pseudo_blur.enabled,
+                    max_steps=120,
+                )
+            )
 
         self.frames = []
         self.last_info = {}
@@ -58,7 +96,7 @@ class ManiSkillAgent:
         """递归处理嵌套字典，确保底层数据都是 Numpy 数组"""
         if isinstance(obs, dict):
             return {k: self._process_obs(v) for k, v in obs.items()}
-        elif isinstance(obs, torch.Tensor):
+        elif torch is not None and isinstance(obs, torch.Tensor):
             obs = obs.cpu().numpy()
         
         if isinstance(obs, np.ndarray) and obs.ndim >= 4:
@@ -82,7 +120,7 @@ class ManiSkillAgent:
         def to_numpy(value):
             if value is None:
                 return None
-            if isinstance(value, torch.Tensor):
+            if torch is not None and isinstance(value, torch.Tensor):
                 value = value.detach().cpu().numpy()
             return np.asarray(value, dtype=np.float32)
 
@@ -113,6 +151,9 @@ class ManiSkillAgent:
     def save_video(self, filename="output.mp4"):
         if not self.frames:
             print("没有可保存的视频帧，可能是当前 Colab 渲染不可用或使用了 state 模式。")
+            return None
+        if imageio is None:
+            print("imageio 不可用，跳过视频保存。")
             return None
 
         imageio.mimsave(filename, self.frames, fps=25)

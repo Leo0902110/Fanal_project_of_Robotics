@@ -1,3 +1,6 @@
-from .pseudo_blur import PseudoBlurConfig, VisualUncertaintyDetector, apply_pseudo_blur
+from .ambiguity import VisualAmbiguityDetector
+from .pseudo_blur import PseudoBlurConfig, apply_pseudo_blur
 
-__all__ = ["PseudoBlurConfig", "VisualUncertaintyDetector", "apply_pseudo_blur"]
+VisualUncertaintyDetector = VisualAmbiguityDetector
+
+__all__ = ["PseudoBlurConfig", "VisualAmbiguityDetector", "VisualUncertaintyDetector", "apply_pseudo_blur"]

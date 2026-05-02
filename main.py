@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator
+from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator, TactileProbePlanner
 from src.models import ActivePerceptionPolicy, ScriptedPickCubePolicy, SineProbePolicy
 from src.perception import PseudoBlurConfig
 from src.tactile import ContactFeatureExtractor, TactileBoundaryRefiner
@@ -55,6 +55,7 @@ def run_episode(
     obs = agent.reset(seed=seed)
     tactile = ContactFeatureExtractor()
     boundary_refiner = TactileBoundaryRefiner()
+    probe_planner = TactileProbePlanner()
     active_perception = ActivePerceptionCoordinator(
         ActivePerceptionConfig(enabled=active_probe, uncertainty_threshold=0.5, probe_budget=2)
     )
@@ -80,17 +81,25 @@ def run_episode(
         uncertainty = agent.get_visual_uncertainty(obs)
         tactile_feature = tactile.extract(obs, agent.last_info)
         policy_phase = str(getattr(policy, "phase", "fallback"))
+        oracle_state = agent.get_task_state()
         decision = active_perception.decide(
             step=step,
             phase=policy_phase,
             uncertainty=uncertainty,
             tactile_feature=tactile_feature,
         )
+        probe_plan = probe_planner.plan(
+            decision=decision.to_dict(),
+            uncertainty=uncertainty,
+            oracle_state=oracle_state,
+        )
         refinement = boundary_refiner.update(
             step=step,
             decision=decision.to_dict(),
             tactile_feature=tactile_feature,
             visual_uncertainty=float(uncertainty["uncertainty"]),
+            probe_plan=probe_plan.to_dict(),
+            oracle_state=oracle_state,
         )
         context = {
             "active_probe": bool(decision.should_probe),
@@ -98,9 +107,11 @@ def run_episode(
             "mean_uncertainty": float(uncertainty["uncertainty"]),
             "tactile": tactile_feature,
             "active_perception": decision.to_dict(),
+            "probe_plan": probe_plan.to_dict(),
             "boundary_refinement": refinement.to_dict(),
             "post_probe_uncertainty": refinement.post_probe_uncertainty,
-            "oracle": agent.get_task_state(),
+            "refined_grasp_target": refinement.refined_grasp_target,
+            "oracle": oracle_state,
         }
         action = policy.predict(obs, step=step, context=context)
         obs, reward, done, info = agent.step(action)
@@ -118,6 +129,11 @@ def run_episode(
                 "confidence_delta": refinement.confidence_delta,
                 "post_probe_uncertainty": refinement.post_probe_uncertainty,
                 "refinement_reason": refinement.reason,
+                "probe_reason": probe_plan.reason,
+                "probe_point": probe_plan.probe_point,
+                "refined_grasp_target": refinement.refined_grasp_target,
+                "dominant_reason": uncertainty.get("dominant_reason", ""),
+                "uncertain_boundary_points": uncertainty.get("uncertain_boundary_points", 0),
                 "reward": reward,
                 "visual_triggered": bool(uncertainty["triggered"]),
                 "contact_detected": tactile_feature["contact_detected"],
@@ -184,6 +200,11 @@ def write_decision_trace(rows: list[dict], trace_path: Path) -> None:
         "confidence_delta",
         "post_probe_uncertainty",
         "refinement_reason",
+        "probe_reason",
+        "probe_point",
+        "refined_grasp_target",
+        "dominant_reason",
+        "uncertain_boundary_points",
         "reward",
         "visual_triggered",
         "contact_detected",
@@ -225,6 +246,8 @@ def write_results(rows: list[dict], output_dir: Path) -> None:
         "contact_resolved_count",
         "refinement_count",
         "final_boundary_confidence",
+        "contact_evidence",
+        "empty_evidence",
         "tactile_contact_count",
         "video_path",
         "decision_trace_path",

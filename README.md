@@ -100,6 +100,9 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+For BC training/evaluation, `torch` is also required. On Colab it is usually
+preinstalled. For local runs, prefer Python 3.12 for the simulator stack.
+
 Run a lightweight smoke test:
 
 ```bash
@@ -190,6 +193,18 @@ Train a minimal behavior cloning baseline:
 
 ```bash
 python scripts/train_bc.py --demo-dir data/demos/pickcube_mvp --output-dir runs/bc_mvp
+```
+
+Run the end-to-end BC pipeline:
+
+```bash
+bash scripts/run_bc_pipeline.sh
+```
+
+Use a specific interpreter when needed:
+
+```bash
+PYTHON_BIN=python3.12 bash scripts/run_bc_pipeline.sh
 ```
 
 Evaluate the trained BC policy in the environment:

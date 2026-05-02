@@ -15,8 +15,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.train_bc import BCPolicy
-from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator
-from src.data import flatten_observation
+from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator, TactileProbePlanner
+from src.data import build_policy_features, flatten_observation
 from src.perception import PseudoBlurConfig
 from src.tactile import ContactFeatureExtractor, TactileBoundaryRefiner
 
@@ -41,13 +41,26 @@ class BCPolicyRuntime:
         self.action_space = action_space
         self.device = device
 
-    def predict(self, obs, *, uncertainty: float, boundary_confidence: float) -> np.ndarray:
-        features = np.concatenate(
-            [
-                flatten_observation(obs),
-                np.asarray([uncertainty, boundary_confidence], dtype=np.float32),
-            ]
-        ).astype(np.float32)
+    def predict(
+        self,
+        obs,
+        *,
+        uncertainty: float,
+        boundary_confidence: float,
+        dominant_reason: str,
+        probe_state: float,
+        probe_point: np.ndarray | None,
+        refined_grasp_target: np.ndarray | None,
+    ) -> np.ndarray:
+        features = build_policy_features(
+            flatten_observation(obs),
+            uncertainty=uncertainty,
+            boundary_confidence=boundary_confidence,
+            dominant_reason=dominant_reason,
+            probe_state=probe_state,
+            probe_point=probe_point,
+            refined_grasp_target=refined_grasp_target,
+        )
         if features.shape[0] != self.input_dim:
             raise ValueError(f"BC input dim mismatch: expected {self.input_dim}, got {features.shape[0]}")
         with torch.no_grad():
@@ -76,6 +89,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
     policy = BCPolicyRuntime(Path(args.checkpoint), agent.env.action_space, device)
     tactile = ContactFeatureExtractor()
     boundary_refiner = TactileBoundaryRefiner()
+    probe_planner = TactileProbePlanner()
     active_perception = ActivePerceptionCoordinator(
         ActivePerceptionConfig(
             enabled=args.use_active_probe,
@@ -95,22 +109,37 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
     for step in range(args.max_steps):
         uncertainty = agent.get_visual_uncertainty(obs)
         tactile_feature = tactile.extract(obs, agent.last_info)
+        oracle_state = agent.get_task_state()
         decision = active_perception.decide(
             step=step,
             phase="bc_policy",
             uncertainty=uncertainty,
             tactile_feature=tactile_feature,
         )
+        probe_plan = probe_planner.plan(
+            decision=decision.to_dict(),
+            uncertainty=uncertainty,
+            oracle_state=oracle_state,
+        )
         refinement = boundary_refiner.update(
             step=step,
             decision=decision.to_dict(),
             tactile_feature=tactile_feature,
             visual_uncertainty=float(uncertainty["uncertainty"]),
+            probe_plan=probe_plan.to_dict(),
+            oracle_state=oracle_state,
         )
         action = policy.predict(
             obs,
             uncertainty=float(uncertainty["uncertainty"]),
             boundary_confidence=float(refinement.boundary_confidence),
+            dominant_reason=str(uncertainty.get("dominant_reason", "none")),
+            probe_state=float(1.0 if decision.should_probe else 0.0),
+            probe_point=np.asarray(probe_plan.probe_point, dtype=np.float32),
+            refined_grasp_target=np.asarray(
+                refinement.refined_grasp_target if refinement.refined_grasp_target is not None else np.zeros(3),
+                dtype=np.float32,
+            ),
         )
         obs, reward, done, info = agent.step(action)
 
@@ -125,6 +154,9 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
                 "boundary_confidence": refinement.boundary_confidence,
                 "post_probe_uncertainty": refinement.post_probe_uncertainty,
                 "refinement_reason": refinement.reason,
+                "probe_reason": probe_plan.reason,
+                "dominant_reason": uncertainty.get("dominant_reason", ""),
+                "refined_grasp_target": refinement.refined_grasp_target,
                 "reward": float(reward),
                 "visual_triggered": bool(uncertainty["triggered"]),
             }
@@ -177,6 +209,9 @@ def write_trace(rows: list[dict], trace_path: Path) -> None:
         "boundary_confidence",
         "post_probe_uncertainty",
         "refinement_reason",
+        "probe_reason",
+        "dominant_reason",
+        "refined_grasp_target",
         "reward",
         "visual_triggered",
     ]

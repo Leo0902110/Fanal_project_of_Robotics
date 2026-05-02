@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator
+from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator, TactileProbePlanner
 from src.data import flatten_observation
 from src.models import ActivePerceptionPolicy, ScriptedPickCubePolicy, SineProbePolicy
 from src.perception import PseudoBlurConfig
@@ -48,6 +48,7 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
     obs = agent.reset(seed=seed)
     tactile = ContactFeatureExtractor()
     boundary_refiner = TactileBoundaryRefiner()
+    probe_planner = TactileProbePlanner()
     active_perception = ActivePerceptionCoordinator(
         ActivePerceptionConfig(enabled=active_probe, uncertainty_threshold=0.5, probe_budget=2)
     )
@@ -68,6 +69,10 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
     dones = []
     uncertainty_values = []
     boundary_confidence = []
+    dominant_reasons = []
+    probe_states = []
+    probe_points = []
+    refined_grasp_targets = []
     decision_trace = []
     success = 0.0
 
@@ -75,17 +80,25 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
         uncertainty = agent.get_visual_uncertainty(obs)
         tactile_feature = tactile.extract(obs, agent.last_info)
         phase = str(getattr(policy, "phase", "fallback"))
+        oracle_state = agent.get_task_state()
         decision = active_perception.decide(
             step=step,
             phase=phase,
             uncertainty=uncertainty,
             tactile_feature=tactile_feature,
         )
+        probe_plan = probe_planner.plan(
+            decision=decision.to_dict(),
+            uncertainty=uncertainty,
+            oracle_state=oracle_state,
+        )
         refinement = boundary_refiner.update(
             step=step,
             decision=decision.to_dict(),
             tactile_feature=tactile_feature,
             visual_uncertainty=float(uncertainty["uncertainty"]),
+            probe_plan=probe_plan.to_dict(),
+            oracle_state=oracle_state,
         )
         context = {
             "active_probe": bool(decision.should_probe),
@@ -93,9 +106,11 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
             "mean_uncertainty": float(uncertainty["uncertainty"]),
             "tactile": tactile_feature,
             "active_perception": decision.to_dict(),
+            "probe_plan": probe_plan.to_dict(),
             "boundary_refinement": refinement.to_dict(),
             "post_probe_uncertainty": refinement.post_probe_uncertainty,
-            "oracle": agent.get_task_state(),
+            "refined_grasp_target": refinement.refined_grasp_target,
+            "oracle": oracle_state,
         }
         action = policy.predict(obs, step=step, context=context)
 
@@ -103,6 +118,15 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
         actions.append(np.asarray(action, dtype=np.float32).reshape(-1))
         uncertainty_values.append(float(uncertainty["uncertainty"]))
         boundary_confidence.append(float(refinement.boundary_confidence))
+        dominant_reasons.append(str(uncertainty.get("dominant_reason", "none")))
+        probe_states.append(float(1.0 if decision.should_probe else 0.0))
+        probe_points.append(np.asarray(probe_plan.probe_point, dtype=np.float32))
+        refined_grasp_targets.append(
+            np.asarray(
+                refinement.refined_grasp_target if refinement.refined_grasp_target is not None else np.zeros(3),
+                dtype=np.float32,
+            )
+        )
 
         obs, reward, done, info = agent.step(action)
         rewards.append(float(reward))
@@ -114,6 +138,8 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
                 "boundary_confidence": refinement.boundary_confidence,
                 "post_probe_uncertainty": refinement.post_probe_uncertainty,
                 "refinement_reason": refinement.reason,
+                "probe_reason": probe_plan.reason,
+                "dominant_reason": uncertainty.get("dominant_reason", ""),
                 "reward": float(reward),
             }
         )
@@ -149,6 +175,10 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
         dones=np.asarray(dones, dtype=bool),
         uncertainty=np.asarray(uncertainty_values, dtype=np.float32),
         boundary_confidence=np.asarray(boundary_confidence, dtype=np.float32),
+        dominant_reason=np.asarray(dominant_reasons),
+        probe_state=np.asarray(probe_states, dtype=np.float32),
+        probe_point=np.asarray(probe_points, dtype=np.float32),
+        refined_grasp_target=np.asarray(refined_grasp_targets, dtype=np.float32),
         decision_trace=np.asarray(decision_trace, dtype=object),
         metadata=np.asarray(metadata, dtype=object),
     )

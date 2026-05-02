@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.data import DemoDataset
+from src.data import DemoDataset, build_policy_features
 
 
 class BCPolicy(nn.Module):
@@ -59,14 +59,20 @@ def load_transitions(demo_dir: Path) -> tuple[np.ndarray, np.ndarray]:
                 f"({obs.shape[1]}, {actions.shape[1]}) in {episode.path}."
             )
 
-        extra = np.stack(
-            [
-                episode.uncertainty,
-                episode.boundary_confidence,
-            ],
-            axis=1,
-        )
-        obs_features.append(np.concatenate([obs, extra], axis=1))
+        transition_features = []
+        for index in range(obs.shape[0]):
+            transition_features.append(
+                build_policy_features(
+                    obs[index],
+                    uncertainty=float(episode.uncertainty[index]),
+                    boundary_confidence=float(episode.boundary_confidence[index]),
+                    dominant_reason=str(episode.dominant_reason[index]),
+                    probe_state=float(episode.probe_state[index]),
+                    probe_point=episode.probe_point[index],
+                    refined_grasp_target=episode.refined_grasp_target[index],
+                )
+            )
+        obs_features.append(np.asarray(transition_features, dtype=np.float32))
         action_targets.append(actions)
 
     return (
@@ -156,7 +162,15 @@ def train(args: argparse.Namespace) -> dict:
             "input_dim": inputs.shape[1],
             "action_dim": targets.shape[1],
             "hidden_dim": args.hidden_dim,
-            "feature_names": ["flattened_observation", "uncertainty", "boundary_confidence"],
+            "feature_names": [
+                "flattened_observation",
+                "uncertainty",
+                "boundary_confidence",
+                "probe_state",
+                "dominant_reason_one_hot",
+                "probe_point_xy",
+                "refined_grasp_target_xyz",
+            ],
             "args": vars(args),
         },
         checkpoint_path,

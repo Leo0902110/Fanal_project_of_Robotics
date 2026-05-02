@@ -59,7 +59,33 @@ else:
 !python main.py --mode mvp --obs-mode state --max-steps 120 --no-video --output-dir results/mvp_state
 ```
 
-## 6. 查看结果
+## 6. 跑完整 BC 训练链
+
+推荐直接使用一键 Colab 脚本：
+
+```python
+!bash scripts/run_colab_training_demo.sh
+```
+
+更短的专用说明见：
+
+```text
+scripts/colab_training_demo.md
+```
+
+如果你只想调用训练链本体，也可以直接跑：
+
+```python
+!bash scripts/run_bc_pipeline.sh
+```
+
+如果你想先缩短验证时间，可以减少 episode 和 epoch：
+
+```python
+!NUM_EPISODES=8 MAX_STEPS=60 TRAIN_EPOCHS=5 bash scripts/run_bc_pipeline.sh
+```
+
+## 7. 查看结果
 
 ```python
 import pandas as pd
@@ -74,7 +100,17 @@ results/mvp/mvp_results.json
 results/mvp/*.mp4
 ```
 
-## 7. 专门渲染机械臂视频
+BC 训练链结果文件：
+
+```text
+data/demos/pickcube_vtabr/
+runs/bc_vtabr/bc_policy.pt
+runs/bc_vtabr/bc_metrics.json
+results/bc_vtabr/bc_eval/bc_eval_results.csv
+results/bc_vtabr/fallback_eval/fallback_eval_results.csv
+```
+
+## 8. 专门渲染机械臂视频
 
 如果目标是生成 ManiSkill/SAPIEN 中 Panda 机械臂的 MP4 展示视频，请打开项目根目录下的：
 
