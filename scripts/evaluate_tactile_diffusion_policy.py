@@ -17,8 +17,13 @@ from models.tactile_diffusion_policy import DiffusionScheduler, TactileDiffusion
 from scripts.collect_d_assist_demos import build_d_tactile_features, build_vision_features, _safe_contact_reading, _vector
 from scripts.evaluate_bc import _scalar, _success_from_info
 from scripts.evaluate_d_policy import load_policy as load_d_policy
+from scripts.material_stress import (
+    MATERIAL_STRESS_PROFILE_CHOICES,
+    OBJECT_PROFILE_CHOICES,
+    PSEUDO_BLUR_PROFILE_CHOICES,
+    build_scene_blur_config,
+)
 from src.env.wrapper import ManiSkillAgent
-from src.perception import build_pseudo_blur_config
 
 
 def _to_numpy(value) -> np.ndarray:
@@ -154,13 +159,16 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
     if base_d_checkpoint:
         base_policy, _base_phase_names, base_normalizers = load_d_policy(Path(base_d_checkpoint), device)
         base_policy.eval()
-    blur_config = build_pseudo_blur_config(
-        enabled=args.scene == "pseudo_blur",
-        seed=seed,
-        profile=args.pseudo_blur_profile,
-        severity=args.pseudo_blur_severity,
-    )
     object_profile = args.object_profile if args.scene == "material_object" else "default"
+    blur_config = build_scene_blur_config(
+        scene=args.scene,
+        seed=seed,
+        object_profile=object_profile,
+        pseudo_blur_profile=args.pseudo_blur_profile,
+        pseudo_blur_severity=args.pseudo_blur_severity,
+        material_visual_stress=args.material_visual_stress,
+        material_stress_profile=args.material_stress_profile,
+    )
     agent = ManiSkillAgent(
         env_id=args.env_id,
         obs_mode=args.obs_mode,
@@ -243,6 +251,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         "object_profile": object_profile,
         "pseudo_blur_profile": blur_config.profile,
         "pseudo_blur_severity": blur_config.severity,
+        "material_visual_stress": bool(args.material_visual_stress),
         "sample_steps": args.sample_steps,
         "replan_interval": args.replan_interval,
         "residual_mode": residual_mode or bool(base_d_checkpoint),
@@ -287,9 +296,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--residual-scale", type=float, default=1.0)
     parser.add_argument("--condition-clip-sigma", type=float, default=0.0)
     parser.add_argument("--scene", choices=["clean", "pseudo_blur", "material_object"], default="pseudo_blur")
-    parser.add_argument("--object-profile", choices=["default", "transparent", "dark", "reflective", "low_texture"], default="default")
-    parser.add_argument("--pseudo-blur-profile", choices=["mild", "transparent", "dark", "reflective", "low_texture"], default="mild")
+    parser.add_argument("--object-profile", choices=OBJECT_PROFILE_CHOICES, default="default")
+    parser.add_argument("--pseudo-blur-profile", choices=PSEUDO_BLUR_PROFILE_CHOICES, default="mild")
     parser.add_argument("--pseudo-blur-severity", type=float, default=1.0)
+    parser.add_argument(
+        "--material-visual-stress",
+        action="store_true",
+        help="Apply material-matched pseudo-blur to observations even when scene=material_object.",
+    )
+    parser.add_argument("--material-stress-profile", choices=MATERIAL_STRESS_PROFILE_CHOICES, default="auto")
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
     parser.add_argument("--save-video", action="store_true")
     parser.add_argument("--video-fps", type=int, default=25)
@@ -316,6 +331,7 @@ def main() -> None:
         "object_profile",
         "pseudo_blur_profile",
         "pseudo_blur_severity",
+        "material_visual_stress",
         "sample_steps",
         "replan_interval",
         "residual_mode",

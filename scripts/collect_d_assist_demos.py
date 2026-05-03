@@ -14,7 +14,12 @@ if str(ROOT) not in sys.path:
 
 from scripts.evaluate_bc import OracleGraspAssist, _success_from_info
 from src.env.wrapper import ManiSkillAgent
-from src.perception import build_pseudo_blur_config
+from scripts.material_stress import (
+    MATERIAL_STRESS_PROFILE_CHOICES,
+    OBJECT_PROFILE_CHOICES,
+    PSEUDO_BLUR_PROFILE_CHOICES,
+    build_scene_blur_config,
+)
 from utils.d_features import TactileContactReading, extract_contact_reading
 
 
@@ -111,13 +116,16 @@ def build_vision_features(uncertainty: dict, vision_dim: int) -> np.ndarray:
 
 def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Path) -> dict:
     seed = args.seed + episode_index
-    blur_config = build_pseudo_blur_config(
-        enabled=args.scene == "pseudo_blur",
-        seed=seed,
-        profile=args.pseudo_blur_profile,
-        severity=args.pseudo_blur_severity,
-    )
     object_profile = args.object_profile if args.scene == "material_object" else "default"
+    blur_config = build_scene_blur_config(
+        scene=args.scene,
+        seed=seed,
+        object_profile=object_profile,
+        pseudo_blur_profile=args.pseudo_blur_profile,
+        pseudo_blur_severity=args.pseudo_blur_severity,
+        material_visual_stress=args.material_visual_stress,
+        material_stress_profile=args.material_stress_profile,
+    )
     agent = ManiSkillAgent(
         env_id=args.env_id,
         obs_mode=args.obs_mode,
@@ -190,6 +198,7 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
         "object_profile": object_profile,
         "pseudo_blur_profile": blur_config.profile,
         "pseudo_blur_severity": blur_config.severity,
+        "material_visual_stress": bool(args.material_visual_stress),
         "control_mode": "pd_joint_pos",
         "phase_names": PHASE_NAMES,
         "teacher": "oracle_grasp_assist_pd_joint_pos",
@@ -219,9 +228,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--env-id", default="PickCube-v1")
     parser.add_argument("--obs-mode", choices=["state", "rgbd"], default="rgbd")
     parser.add_argument("--scene", choices=["clean", "pseudo_blur", "material_object"], default="pseudo_blur")
-    parser.add_argument("--object-profile", choices=["default", "transparent", "dark", "reflective", "low_texture"], default="default")
-    parser.add_argument("--pseudo-blur-profile", choices=["mild", "transparent", "dark", "reflective", "low_texture"], default="mild")
+    parser.add_argument("--object-profile", choices=OBJECT_PROFILE_CHOICES, default="default")
+    parser.add_argument("--pseudo-blur-profile", choices=PSEUDO_BLUR_PROFILE_CHOICES, default="mild")
     parser.add_argument("--pseudo-blur-severity", type=float, default=1.0)
+    parser.add_argument(
+        "--material-visual-stress",
+        action="store_true",
+        help="Apply material-matched pseudo-blur to observations even when scene=material_object.",
+    )
+    parser.add_argument("--material-stress-profile", choices=MATERIAL_STRESS_PROFILE_CHOICES, default="auto")
     parser.add_argument("--vision-dim", type=int, default=32)
     parser.add_argument("--output-dir", default="data/demos/pickcube_d_assist_teacher")
     parser.add_argument("--assist-xy-threshold", type=float, default=0.02)
