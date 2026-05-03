@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -53,10 +54,31 @@ class ActivePerceptionCoordinator:
         tactile_feature: dict[str, Any],
     ) -> ActivePerceptionDecision:
         visual_uncertainty = self._float(uncertainty.get("uncertainty", 0.0))
-        contact_strength = self._float(tactile_feature.get("contact_strength", 0.0))
         contact_detected = self._float(tactile_feature.get("contact_detected", 0.0))
-        tactile_confidence = max(contact_detected, min(contact_strength, 1.0))
-        ambiguity_score = max(0.0, visual_uncertainty - tactile_confidence)
+        contact_strength = max(
+            self._float(tactile_feature.get("contact_strength", 0.0)),
+            self._float(tactile_feature.get("net_force_norm", 0.0)),
+        )
+        pairwise_contact_used = min(max(self._float(tactile_feature.get("pairwise_contact_used", 0.0)), 0.0), 1.0)
+        left_force_norm = max(self._float(tactile_feature.get("left_force_norm", 0.0)), 0.0)
+        right_force_norm = max(self._float(tactile_feature.get("right_force_norm", 0.0)), 0.0)
+        normalized_contact = math.tanh(max(contact_strength, 0.0))
+        force_balance = self._force_balance(left_force_norm, right_force_norm)
+        contact_evidence = max(contact_detected, normalized_contact)
+        tactile_confidence = min(
+            1.0,
+            max(
+                contact_detected,
+                contact_evidence * (0.65 + 0.2 * pairwise_contact_used + 0.15 * force_balance),
+            ),
+        )
+        center_missing_ratio = self._float(uncertainty.get("center_missing_ratio", uncertainty.get("missing_ratio", 0.0)))
+        normalized_depth_std = self._float(uncertainty.get("normalized_depth_std", 0.0))
+        visual_pressure = min(
+            1.0,
+            max(visual_uncertainty, 0.65 * visual_uncertainty + 0.25 * center_missing_ratio + 0.1 * normalized_depth_std),
+        )
+        ambiguity_score = max(0.0, visual_pressure - tactile_confidence)
 
         ambiguous = ambiguity_score >= self.config.uncertainty_threshold
         if ambiguous:
@@ -151,3 +173,10 @@ class ActivePerceptionCoordinator:
             return float(value)
         except Exception:
             return 0.0
+
+    def _force_balance(self, left_force_norm: float, right_force_norm: float) -> float:
+        total = left_force_norm + right_force_norm
+        if total <= 1e-6:
+            return 0.0
+        imbalance = abs(left_force_norm - right_force_norm) / total
+        return max(0.0, 1.0 - min(imbalance, 1.0))

@@ -9,9 +9,60 @@ from pathlib import Path
 import numpy as np
 
 from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator
-from src.models import ActivePerceptionPolicy, ScriptedPickCubePolicy, SineProbePolicy
-from src.perception import PseudoBlurConfig
+from src.models import ActivePerceptionPolicy, JointScriptedPickCubePolicy, ScriptedPickCubePolicy, SineProbePolicy
+from src.perception import build_pseudo_blur_config
 from src.tactile import ContactFeatureExtractor, TactileBoundaryRefiner
+
+
+class DActiveTactilePolicyAdapter:
+    """Adapter that exposes D's ActiveTactilePolicy through the main predict API."""
+
+    def __init__(self, action_space, use_active_probe: bool, vision_dim: int = 32):
+        self.action_space = action_space
+        self.use_active_probe = use_active_probe
+        self.vision_dim = vision_dim
+        self.phase = "fallback"
+        self.probe_count = 0
+        self.policy = None
+
+    def _ensure_policy(self, tactile_dim: int):
+        if self.policy is not None:
+            return
+        from models.d_policy import ActiveTactilePolicy
+
+        self.policy = ActiveTactilePolicy(
+            action_dim=self.action_space.shape[0],
+            vision_dim=self.vision_dim,
+            tactile_dim=tactile_dim,
+        )
+        self.policy.eval()
+
+    def predict(self, obs, step: int = 0, context: dict | None = None):
+        context = context or {}
+        env = context.get("env")
+        info = context.get("info", {})
+        visual_uncertainty = float(context.get("mean_uncertainty", 0.0))
+        if env is None:
+            return np.zeros(self.action_space.shape, dtype=np.float32)
+
+        from utils.d_features import extract_contact_reading, extract_d_features
+        from utils.d_interface import DInferenceRequest
+
+        tactile_reading = extract_contact_reading(env)
+        bundle = extract_d_features(obs, info, tactile_reading)
+        self._ensure_policy(bundle.feature_vector.shape[0])
+        request = DInferenceRequest(
+            feature_bundle=bundle,
+            visual_uncertainty=visual_uncertainty if self.use_active_probe else 0.0,
+            probe_steps_used=self.probe_count,
+            step_idx=step,
+            metadata={"source": "main"},
+        )
+        output = self.policy.act_from_request(request)
+        self.phase = output.policy_mode
+        if output.probe_triggered:
+            self.probe_count += 1
+        return np.clip(output.action.astype(np.float32), self.action_space.low, self.action_space.high)
 
 
 def _success_from_info(info: dict) -> float:
@@ -36,19 +87,33 @@ def run_episode(
     seed: int,
     save_video: bool,
     policy_name: str,
+    pseudo_blur_profile: str,
+    pseudo_blur_severity: float,
+    object_profile: str,
 ) -> dict:
     from src.env.wrapper import ManiSkillAgent
 
-    blur_config = PseudoBlurConfig(enabled=pseudo_blur, seed=seed)
+    blur_config = build_pseudo_blur_config(
+        enabled=pseudo_blur,
+        seed=seed,
+        profile=pseudo_blur_profile,
+        severity=pseudo_blur_severity,
+    )
     render_mode = "rgb_array" if save_video else None
     render_backend = None if save_video else "none"
-    control_mode = "pd_ee_delta_pose" if policy_name == "scripted" else None
+    if policy_name == "scripted":
+        control_mode = "pd_ee_delta_pose"
+    elif policy_name in {"d", "joint_scripted"}:
+        control_mode = "pd_joint_delta_pos"
+    else:
+        control_mode = None
     agent = ManiSkillAgent(
         env_id=env_id,
         obs_mode=obs_mode,
         control_mode=control_mode,
         render_mode=render_mode,
         render_backend=render_backend,
+        object_profile=object_profile,
         pseudo_blur=blur_config,
     )
 
@@ -65,6 +130,10 @@ def run_episode(
 
     if effective_policy_name == "scripted":
         policy = ScriptedPickCubePolicy(agent.env.action_space, use_active_probe=active_probe, probe_steps=2)
+    elif effective_policy_name == "joint_scripted":
+        policy = JointScriptedPickCubePolicy(agent.env.action_space, use_active_probe=active_probe, probe_steps=2)
+    elif effective_policy_name == "d":
+        policy = DActiveTactilePolicyAdapter(agent.env.action_space, use_active_probe=active_probe)
     else:
         base_policy = SineProbePolicy(agent.env.action_space)
         policy = ActivePerceptionPolicy(base_policy, agent.env.action_space) if active_probe else base_policy
@@ -78,7 +147,7 @@ def run_episode(
 
     for step in range(max_steps):
         uncertainty = agent.get_visual_uncertainty(obs)
-        tactile_feature = tactile.extract(obs, agent.last_info)
+        tactile_feature = tactile.extract(obs, agent.last_info, env=agent.env)
         policy_phase = str(getattr(policy, "phase", "fallback"))
         decision = active_perception.decide(
             step=step,
@@ -101,6 +170,8 @@ def run_episode(
             "boundary_refinement": refinement.to_dict(),
             "post_probe_uncertainty": refinement.post_probe_uncertainty,
             "oracle": agent.get_task_state(),
+            "env": agent.env,
+            "info": agent.last_info,
         }
         action = policy.predict(obs, step=step, context=context)
         obs, reward, done, info = agent.step(action)
@@ -144,7 +215,10 @@ def run_episode(
         "condition": condition,
         "env_id": env_id,
         "obs_mode": agent.obs_mode,
+        "object_profile": object_profile,
         "pseudo_blur": pseudo_blur,
+        "pseudo_blur_profile": blur_config.profile,
+        "pseudo_blur_severity": blur_config.severity,
         "active_probe": active_probe,
         "requested_policy": policy_name,
         "effective_policy": effective_policy_name,
@@ -209,7 +283,10 @@ def write_results(rows: list[dict], output_dir: Path) -> None:
         "condition",
         "env_id",
         "obs_mode",
+        "object_profile",
         "pseudo_blur",
+        "pseudo_blur_profile",
+        "pseudo_blur_severity",
         "active_probe",
         "requested_policy",
         "effective_policy",
@@ -268,6 +345,15 @@ def build_experiments(mode: str, scene: str, use_active_probe: bool) -> list[dic
                 "active_probe": use_active_probe,
             },
         ]
+    if scene == "material_object":
+        return [
+            {
+                "name": "material_object",
+                "condition": "Material Object",
+                "pseudo_blur": False,
+                "active_probe": use_active_probe,
+            },
+        ]
     return [
         {
             "name": "baseline_clean",
@@ -293,13 +379,16 @@ def build_experiments(mode: str, scene: str, use_active_probe: bool) -> list[dic
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="MVP runner for active perception under visual pseudo-blur.")
     parser.add_argument("--mode", choices=["smoke", "mvp"], default="mvp")
-    parser.add_argument("--scene", choices=["all", "clean", "pseudo_blur"], default="all")
+    parser.add_argument("--scene", choices=["all", "clean", "pseudo_blur", "material_object"], default="all")
     parser.add_argument("--env-id", default="PickCube-v1")
     parser.add_argument("--obs-mode", choices=["state", "rgbd"], default="rgbd")
     parser.add_argument("--max-steps", type=int, default=120)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--output-dir", default="results/mvp")
-    parser.add_argument("--policy", choices=["sine", "scripted"], default="scripted")
+    parser.add_argument("--policy", choices=["sine", "scripted", "joint_scripted", "d"], default="scripted")
+    parser.add_argument("--pseudo-blur-profile", choices=["mild", "transparent", "dark", "reflective", "low_texture"], default="mild")
+    parser.add_argument("--pseudo-blur-severity", type=float, default=1.0)
+    parser.add_argument("--object-profile", choices=["default", "transparent", "dark", "reflective", "low_texture"], default="default")
     parser.add_argument("--use-active-probe", action="store_true")
     parser.add_argument("--no-video", action="store_true", help="Disable video export for faster runs.")
     return parser.parse_args()
@@ -325,6 +414,9 @@ def main() -> None:
             seed=args.seed,
             save_video=not args.no_video,
             policy_name=args.policy,
+            pseudo_blur_profile=args.pseudo_blur_profile,
+            pseudo_blur_severity=args.pseudo_blur_severity,
+            object_profile=args.object_profile if args.scene == "material_object" else "default",
         )
         rows.append(row)
         print(json.dumps(row, ensure_ascii=False, indent=2))

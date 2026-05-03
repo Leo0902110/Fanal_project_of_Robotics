@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.data import DemoDataset
+from src.data import DEFAULT_BC_FEATURE_NAMES, ORACLE_BC_FEATURE_NAMES, DemoDataset, build_transition_feature_matrix
 
 
 class BCPolicy(nn.Module):
@@ -39,7 +39,10 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
 
 
-def load_transitions(demo_dir: Path) -> tuple[np.ndarray, np.ndarray]:
+def load_transitions(
+    demo_dir: Path,
+    feature_names: tuple[str, ...] = DEFAULT_BC_FEATURE_NAMES,
+) -> tuple[np.ndarray, np.ndarray]:
     dataset = DemoDataset(demo_dir)
     obs_features = []
     action_targets = []
@@ -59,14 +62,7 @@ def load_transitions(demo_dir: Path) -> tuple[np.ndarray, np.ndarray]:
                 f"({obs.shape[1]}, {actions.shape[1]}) in {episode.path}."
             )
 
-        extra = np.stack(
-            [
-                episode.uncertainty,
-                episode.boundary_confidence,
-            ],
-            axis=1,
-        )
-        obs_features.append(np.concatenate([obs, extra], axis=1))
+        obs_features.append(build_transition_feature_matrix(episode, feature_names=feature_names))
         action_targets.append(actions)
 
     return (
@@ -97,6 +93,17 @@ def make_loader(inputs: np.ndarray, targets: np.ndarray, batch_size: int, shuffl
     return DataLoader(tensors, batch_size=batch_size, shuffle=shuffle)
 
 
+def fit_input_normalizer(inputs: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    mean = inputs.mean(axis=0, dtype=np.float64).astype(np.float32)
+    std = inputs.std(axis=0, dtype=np.float64).astype(np.float32)
+    std = np.where(std < 1e-6, 1.0, std).astype(np.float32)
+    return mean, std
+
+
+def normalize_inputs(inputs: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:
+    return ((inputs - mean) / std).astype(np.float32)
+
+
 def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> float:
     if len(loader.dataset) == 0:
         return 0.0
@@ -114,8 +121,12 @@ def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> floa
 def train(args: argparse.Namespace) -> dict:
     set_seed(args.seed)
     device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
-    inputs, targets = load_transitions(Path(args.demo_dir))
+    feature_names = ORACLE_BC_FEATURE_NAMES if args.feature_set == "oracle_geometry" else DEFAULT_BC_FEATURE_NAMES
+    inputs, targets = load_transitions(Path(args.demo_dir), feature_names=feature_names)
     train_x, train_y, val_x, val_y = split_train_val(inputs, targets, args.val_fraction, args.seed)
+    input_mean, input_std = fit_input_normalizer(train_x)
+    train_x = normalize_inputs(train_x, input_mean, input_std)
+    val_x = normalize_inputs(val_x, input_mean, input_std)
 
     train_loader = make_loader(train_x, train_y, args.batch_size, shuffle=True)
     val_loader = make_loader(val_x, val_y, args.batch_size, shuffle=False)
@@ -156,7 +167,10 @@ def train(args: argparse.Namespace) -> dict:
             "input_dim": inputs.shape[1],
             "action_dim": targets.shape[1],
             "hidden_dim": args.hidden_dim,
-            "feature_names": ["flattened_observation", "uncertainty", "boundary_confidence"],
+            "feature_names": list(feature_names),
+            "feature_set": args.feature_set,
+            "input_mean": torch.from_numpy(input_mean),
+            "input_std": torch.from_numpy(input_std),
             "args": vars(args),
         },
         checkpoint_path,
@@ -165,6 +179,7 @@ def train(args: argparse.Namespace) -> dict:
         "num_transitions": int(len(inputs)),
         "input_dim": int(inputs.shape[1]),
         "action_dim": int(targets.shape[1]),
+        "input_normalized": True,
         "checkpoint_path": str(checkpoint_path),
         "history": history,
         "final_train_loss": history[-1]["train_loss"] if history else 0.0,
@@ -189,6 +204,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
+    parser.add_argument("--feature-set", choices=["default", "oracle_geometry"], default="default")
     parser.add_argument("--log-every", type=int, default=10)
     return parser.parse_args()
 

@@ -1,3 +1,9 @@
-from .pseudo_blur import PseudoBlurConfig, VisualUncertaintyDetector, apply_pseudo_blur
+from .pseudo_blur import PSEUDO_BLUR_PROFILES, PseudoBlurConfig, VisualUncertaintyDetector, apply_pseudo_blur, build_pseudo_blur_config
 
-__all__ = ["PseudoBlurConfig", "VisualUncertaintyDetector", "apply_pseudo_blur"]
+__all__ = [
+	"PSEUDO_BLUR_PROFILES",
+	"PseudoBlurConfig",
+	"VisualUncertaintyDetector",
+	"apply_pseudo_blur",
+	"build_pseudo_blur_config",
+]

@@ -74,6 +74,7 @@ class DTrainingRequest:
     target_actions: TensorLike | None = None
     target_probe_flags: TensorLike | None = None
     target_uncertainty: TensorLike | None = None
+    target_phase_labels: TensorLike | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -85,4 +86,5 @@ def build_training_batch_tensors(request: DTrainingRequest) -> dict[str, torch.T
         "target_actions": _to_2d_float_tensor(request.target_actions),
         "target_probe_flags": _to_flat_float_tensor(request.target_probe_flags),
         "target_uncertainty": _to_flat_float_tensor(request.target_uncertainty),
+        "target_phase_labels": _to_flat_float_tensor(request.target_phase_labels),
     }

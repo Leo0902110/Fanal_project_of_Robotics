@@ -14,8 +14,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator
-from src.models import ActivePerceptionPolicy, SineProbePolicy
-from src.perception import PseudoBlurConfig
+from src.models import ActivePerceptionPolicy, JointScriptedPickCubePolicy, SineProbePolicy
+from src.perception import build_pseudo_blur_config
 from src.tactile import ContactFeatureExtractor, TactileBoundaryRefiner
 
 
@@ -33,18 +33,27 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
 
     seed = args.seed + episode_index
     pseudo_blur = args.scene == "pseudo_blur"
-    blur_config = PseudoBlurConfig(enabled=pseudo_blur, seed=seed)
+    blur_config = build_pseudo_blur_config(
+        enabled=pseudo_blur,
+        seed=seed,
+        profile=args.pseudo_blur_profile,
+        severity=args.pseudo_blur_severity,
+    )
+    control_mode = "pd_joint_delta_pos" if args.policy == "joint_scripted" else None
     agent = ManiSkillAgent(
         env_id=args.env_id,
         obs_mode=args.obs_mode,
-        control_mode=None,
+        control_mode=control_mode,
         render_mode=None,
         render_backend="none",
         pseudo_blur=blur_config,
     )
     obs = agent.reset(seed=seed)
-    base_policy = SineProbePolicy(agent.env.action_space)
-    policy = ActivePerceptionPolicy(base_policy, agent.env.action_space) if args.use_active_probe else base_policy
+    if args.policy == "joint_scripted":
+        policy = JointScriptedPickCubePolicy(agent.env.action_space, use_active_probe=args.use_active_probe, probe_steps=2)
+    else:
+        base_policy = SineProbePolicy(agent.env.action_space)
+        policy = ActivePerceptionPolicy(base_policy, agent.env.action_space) if args.use_active_probe else base_policy
     tactile = ContactFeatureExtractor()
     boundary_refiner = TactileBoundaryRefiner()
     active_perception = ActivePerceptionCoordinator(
@@ -52,7 +61,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
             enabled=args.use_active_probe,
             uncertainty_threshold=0.5,
             probe_budget=2,
-            probe_phases=("fallback",),
+            probe_phases=("fallback", "approach"),
         )
     )
 
@@ -65,10 +74,10 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
 
     for step in range(args.max_steps):
         uncertainty = agent.get_visual_uncertainty(obs)
-        tactile_feature = tactile.extract(obs, agent.last_info)
+        tactile_feature = tactile.extract(obs, agent.last_info, env=agent.env)
         decision = active_perception.decide(
             step=step,
-            phase="fallback",
+            phase=str(getattr(policy, "phase", "fallback")),
             uncertainty=uncertainty,
             tactile_feature=tactile_feature,
         )
@@ -86,6 +95,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
                 "uncertainty": uncertainty,
                 "active_perception": decision.to_dict(),
                 "boundary_refinement": refinement.to_dict(),
+                "oracle": agent.get_task_state(),
             },
         )
         obs, reward, done, info = agent.step(action)
@@ -109,7 +119,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
             break
 
     agent.close()
-    trace_path = output_dir / f"episode_{episode_index:04d}_fallback_eval_trace.csv"
+    trace_path = output_dir / f"episode_{episode_index:04d}_{args.policy}_eval_trace.csv"
     write_trace(trace_rows, trace_path)
     return {
         "episode": episode_index,
@@ -118,8 +128,10 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         "obs_mode": agent.obs_mode,
         "scene": args.scene,
         "pseudo_blur": pseudo_blur,
+        "pseudo_blur_profile": blur_config.profile,
+        "pseudo_blur_severity": blur_config.severity,
         "active_probe": bool(args.use_active_probe),
-        "policy": "fallback",
+        "policy": args.policy,
         "checkpoint": "",
         "steps": len(rewards),
         "total_reward": float(np.sum(rewards)) if rewards else 0.0,
@@ -165,8 +177,9 @@ def write_trace(rows: list[dict], trace_path: Path) -> None:
 
 def write_summary(rows: list[dict], output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    json_path = output_dir / "fallback_eval_results.json"
-    csv_path = output_dir / "fallback_eval_results.csv"
+    policy = str(rows[0].get("policy", "policy")) if rows else "policy"
+    json_path = output_dir / f"{policy}_eval_results.json"
+    csv_path = output_dir / f"{policy}_eval_results.csv"
     with json_path.open("w", encoding="utf-8") as f:
         json.dump(rows, f, ensure_ascii=False, indent=2)
 
@@ -177,6 +190,8 @@ def write_summary(rows: list[dict], output_dir: Path) -> None:
         "obs_mode",
         "scene",
         "pseudo_blur",
+        "pseudo_blur_profile",
+        "pseudo_blur_severity",
         "active_probe",
         "policy",
         "checkpoint",
@@ -200,18 +215,21 @@ def write_summary(rows: list[dict], output_dir: Path) -> None:
         writer.writeheader()
         for row in rows:
             writer.writerow({key: row.get(key, "") for key in fieldnames})
-    print(f"Saved fallback eval results: {json_path}")
-    print(f"Saved fallback eval results: {csv_path}")
+    print(f"Saved {policy} eval results: {json_path}")
+    print(f"Saved {policy} eval results: {csv_path}")
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate the sine fallback policy for BC comparison.")
+    parser = argparse.ArgumentParser(description="Evaluate sine or joint-scripted policies for BC comparison.")
     parser.add_argument("--num-episodes", type=int, default=5)
     parser.add_argument("--max-steps", type=int, default=120)
     parser.add_argument("--seed", type=int, default=100)
     parser.add_argument("--env-id", default="PickCube-v1")
     parser.add_argument("--obs-mode", choices=["state", "rgbd"], default="rgbd")
     parser.add_argument("--scene", choices=["clean", "pseudo_blur"], default="pseudo_blur")
+    parser.add_argument("--pseudo-blur-profile", choices=["mild", "transparent", "dark", "reflective", "low_texture"], default="mild")
+    parser.add_argument("--pseudo-blur-severity", type=float, default=1.0)
+    parser.add_argument("--policy", choices=["sine", "joint_scripted"], default="sine")
     parser.add_argument("--use-active-probe", action="store_true")
     parser.add_argument("--output-dir", default="results/fallback_eval")
     return parser.parse_args()

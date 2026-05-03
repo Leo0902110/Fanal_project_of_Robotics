@@ -1,3 +1,15 @@
-from .policies import ActivePerceptionPolicy, RandomPolicy, ScriptedPickCubePolicy, SineProbePolicy
+from .policies import (
+	ActivePerceptionPolicy,
+	JointScriptedPickCubePolicy,
+	RandomPolicy,
+	ScriptedPickCubePolicy,
+	SineProbePolicy,
+)
 
-__all__ = ["ActivePerceptionPolicy", "RandomPolicy", "ScriptedPickCubePolicy", "SineProbePolicy"]
+__all__ = [
+	"ActivePerceptionPolicy",
+	"JointScriptedPickCubePolicy",
+	"RandomPolicy",
+	"ScriptedPickCubePolicy",
+	"SineProbePolicy",
+]
