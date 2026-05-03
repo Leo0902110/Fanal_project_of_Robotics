@@ -16,6 +16,8 @@
 
 完整流水线由 `scripts/run_material_stress_retrain_pipeline.ps1` 实现。
 
+项目从 MVP 到当前实验设计的决策路径见 [MVP 决策流程图](../mvp_decision_flow.md)。
+
 最终训练与评估流程如下：
 
 1. 采集 500 条 D-assist teacher demonstrations，每类材质 125 条。
