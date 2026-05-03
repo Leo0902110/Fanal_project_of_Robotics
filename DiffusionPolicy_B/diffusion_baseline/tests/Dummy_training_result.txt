@@ -1,0 +1,32 @@
+你的环境里 torch.cuda.is_available() 为 True，本次实际使用 cuda 跑通训练和评估。
+
+device=cuda
+buffer_size=1024 batch_size=16 num_steps=50
+step=0001 loss=0.887167
+step=0010 loss=1.061610
+step=0020 loss=0.903296
+step=0030 loss=0.974473
+step=0040 loss=0.990102
+step=0050 loss=0.957031
+checkpoint_path=diffusion_baseline\checkpoints\dummy_ckpt.pt
+checkpoint_size_bytes=1578210
+DUMMY_TRAIN_SUCCESS final_loss=0.957031
+
+device=cuda
+checkpoint_step=50
+sampled_action_shape=(2, 8, 4)
+sampled_action_min=-4.999800
+sampled_action_max=4.999257
+DUMMY_EVAL_SUCCESS
+DUMMY_TRAIN_AND_EVAL_LAUNCHER_SUCCESS
+
+日志快速分析（结论式）
+
+设备：device=cuda —— 虚拟环境已识别并使用 GPU，说明 CUDA 版 PyTorch 可用。
+训练损失：step=0001..0050，loss 在 ~0.88–1.06 波动，最终 DUMMY_TRAIN_SUCCESS final_loss=0.957031
+—— Dummy 训练能稳定前向、反向并更新参数（没有崩溃或 NaN），这是最重要的。
+检查点：checkpoint_path=diffusion_baseline\checkpoints\dummy_ckpt.pt，大小 ~1.5MB —— checkpoint 写出正常。
+评估：sampled_action_shape=(2, 8, 4)，min/max ≈ ±5，DUMMY_EVAL_SUCCESS 
+—— 采样流程输出形状合理，数值在可接受范围（表明网络输出未溢出）。
+总体结论：Dummy 训练与评估流程“可跑通且稳定”，可以进入与真实环境的最小集成阶段
+（用 ManiSkill 环境采集数据并替换随机 buffer），并开始做小规模的端到端训练/对标。
