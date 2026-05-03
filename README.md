@@ -129,12 +129,27 @@ python main.py --mode mvp --scene pseudo_blur --pseudo-blur-profile transparent 
 
 ## Quick Start
 
+Recommended final-deliverable entry:
+
+```bash
+bash scripts/run_final_submission.sh
+```
+
+Chinese delivery notes:
+
+```text
+FINAL_PROJECT_DELIVERABLE.md
+```
+
 Install the base dependencies first:
 
 ```bash
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
+
+For BC training/evaluation, `torch` is also required. On Colab it is usually
+preinstalled. For local runs, prefer Python 3.12 for the simulator stack.
 
 Run a lightweight smoke test:
 
@@ -219,13 +234,29 @@ python scripts/plot_results.py --results-dir results/local_mvp_rgbd
 Collect active-perception demonstrations for future BC/DP training:
 
 ```bash
-python scripts/collect_demos.py --num-episodes 5 --scene pseudo_blur --use-active-probe --output-dir data/demos/pickcube_mvp
+python scripts/collect_demos.py --num-episodes 5 --scene pseudo_blur --policy scripted --use-active-probe --output-dir data/demos/pickcube_mvp
 ```
 
 Train a minimal behavior cloning baseline:
 
 ```bash
 python scripts/train_bc.py --demo-dir data/demos/pickcube_mvp --output-dir runs/bc_mvp
+```
+
+Run the end-to-end BC pipeline:
+
+```bash
+bash scripts/run_bc_pipeline.sh
+```
+
+The pipeline now validates that collected demos come from successful
+`--policy scripted` rollouts before training starts. If the scripted baseline is
+not succeeding, the script exits early instead of training on bad trajectories.
+
+Use a specific interpreter when needed:
+
+```bash
+PYTHON_BIN=python3.12 bash scripts/run_bc_pipeline.sh
 ```
 
 Evaluate the trained BC policy in the environment:
@@ -249,6 +280,60 @@ Compare BC against the fallback policy:
 python scripts/evaluate_fallback.py --num-episodes 5 --scene pseudo_blur --use-active-probe --output-dir results/policy_comparison/fallback
 python scripts/evaluate_bc.py --checkpoint runs/bc_mvp/bc_policy.pt --num-episodes 5 --scene pseudo_blur --use-active-probe --output-dir results/policy_comparison/bc
 python scripts/plot_policy_comparison.py --fallback-csv results/policy_comparison/fallback/fallback_eval_results.csv --bc-csv results/policy_comparison/bc/bc_eval_results.csv
+```
+
+## Full Mechanical-Arm Render
+
+To verify the real ManiSkill arm instead of the mock fallback, run the render
+entry on a machine with working ManiSkill/SAPIEN rendering:
+
+```bash
+bash scripts/run_render_mecharm.sh
+```
+
+The run is considered a true mechanical-arm demo only when
+`results/render_active_probe/mvp_results.csv` reports:
+
+```text
+env_backend=maniskill
+fallback_used=False
+video_path=results/render_active_probe/active_probe.mp4
+```
+
+If `env_backend=mock`, the algorithm loop still ran, but the visual arm render
+did not initialize in that runtime.
+
+## Minimal Full Diffusion Policy
+
+The MVP now includes a small conditional Diffusion Policy path. It predicts a
+short future action sequence from the same active-perception features used by
+BC: flattened observation, visual uncertainty, boundary confidence, probe
+state, probe point, and refined grasp target.
+
+Run the full policy pipeline:
+
+```bash
+bash scripts/run_diffusion_policy_pipeline.sh
+```
+
+The pipeline performs:
+
+1. collect successful scripted demonstrations;
+2. validate the demo manifest;
+3. train `runs/dp_mvp/diffusion_policy.pt`;
+4. evaluate the learned policy;
+5. compare against the sine fallback policy.
+
+For quicker GitHub/Colab smoke verification, reduce the workload:
+
+```bash
+NUM_EPISODES=10 TRAIN_EPOCHS=2 DIFFUSION_STEPS=10 bash scripts/run_diffusion_policy_pipeline.sh
+```
+
+The main config reference is:
+
+```text
+configs/dp_pickcube.yaml
 ```
 
 Render a decision-trace animation for presentation:

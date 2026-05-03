@@ -300,10 +300,17 @@ class ScriptedPickCubePolicy:
             score = float(context.get("mean_uncertainty", 0.0))
         return score >= self.uncertainty_threshold
 
-    def _probe_action(self) -> np.ndarray:
+    def _probe_action(self, context: dict) -> np.ndarray:
         action = self._base_action(gripper=1.0)
-        direction = -1.0 if self.probe_count % 2 else 1.0
-        action[1] = 0.08 * direction
+        plan = context.get("probe_plan", {}) if isinstance(context, dict) else {}
+        offset = plan.get("boundary_offset_xyz") if isinstance(plan, dict) else None
+        if offset is not None:
+            offset_arr = np.asarray(offset, dtype=np.float32).reshape(-1)
+            for index in range(min(3, offset_arr.size)):
+                action[index] = np.clip(offset_arr[index] / 0.08, -0.6, 0.6)
+        else:
+            direction = -1.0 if self.probe_count % 2 else 1.0
+            action[1] = 0.08 * direction
         self.probe_count += 1
         return np.clip(action, self.action_space.low, self.action_space.high)
 
@@ -320,10 +327,13 @@ class ScriptedPickCubePolicy:
             return self.action_space.sample()
 
         if self._should_probe(context):
-            return self._probe_action()
+            return self._probe_action(context)
 
         approach_target = obj_pos + np.array([0.0, 0.0, 0.08], dtype=np.float32)
-        grasp_target = obj_pos.copy()
+        refined_target = context.get("refined_grasp_target")
+        grasp_target = self._vector(refined_target, 3) if refined_target is not None else obj_pos.copy()
+        if grasp_target is None:
+            grasp_target = obj_pos.copy()
         transfer_target = goal_pos + np.array([0.0, 0.0, 0.02], dtype=np.float32)
 
         self.phase_steps += 1

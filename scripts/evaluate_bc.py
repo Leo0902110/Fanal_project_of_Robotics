@@ -15,8 +15,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.train_bc import BCPolicy
-from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator
-from src.data import DEFAULT_BC_FEATURE_NAMES, LEGACY_BC_FEATURE_NAMES, build_policy_feature_vector
+from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator, TactileProbePlanner
+from src.data import LEGACY_BC_FEATURE_NAMES, build_policy_feature_vector
 from src.perception import build_pseudo_blur_config
 from src.tactile import ContactFeatureExtractor, TactileBoundaryRefiner
 
@@ -203,6 +203,7 @@ class BCPolicyRuntime:
         self.model.eval()
         self.action_space = action_space
         self.device = device
+        self.checkpoint_args = checkpoint.get("args", {})
 
     def predict(
         self,
@@ -213,6 +214,10 @@ class BCPolicyRuntime:
         tactile_feature: dict[str, float],
         post_probe_uncertainty: float,
         task_geometry: dict[str, float] | None = None,
+        dominant_reason: str = "none",
+        probe_state: float = 0.0,
+        probe_point: np.ndarray | None = None,
+        refined_grasp_target: np.ndarray | None = None,
     ) -> np.ndarray:
         feature_values = {
             "uncertainty": uncertainty,
@@ -224,6 +229,12 @@ class BCPolicyRuntime:
             "net_force_norm": float(tactile_feature.get("net_force_norm", 0.0)),
             "pairwise_contact_used": float(tactile_feature.get("pairwise_contact_used", 0.0)),
             "post_probe_uncertainty": post_probe_uncertainty,
+            "dominant_reason": dominant_reason,
+            "probe_state": probe_state,
+            "probe_point": np.asarray(probe_point if probe_point is not None else np.zeros(2), dtype=np.float32),
+            "refined_grasp_target": np.asarray(
+                refined_grasp_target if refined_grasp_target is not None else np.zeros(3), dtype=np.float32
+            ),
         }
         if task_geometry:
             feature_values.update(task_geometry)
@@ -236,6 +247,11 @@ class BCPolicyRuntime:
             action = self.model(torch.from_numpy(features).to(self.device).unsqueeze(0)).cpu().numpy()[0]
         if action.shape[0] != self.action_dim:
             raise ValueError(f"BC action dim mismatch: expected {self.action_dim}, got {action.shape[0]}")
+        if self.action_space.shape is not None and action.shape[0] != self.action_space.shape[0]:
+            raise ValueError(
+                "BC action space mismatch between checkpoint and evaluation env. "
+                f"Checkpoint action_dim={action.shape[0]}, env action_dim={self.action_space.shape[0]}."
+            )
         return np.clip(action.astype(np.float32), self.action_space.low, self.action_space.high)
 
     def _to_numpy(self, value) -> np.ndarray:
@@ -256,12 +272,15 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         severity=args.pseudo_blur_severity,
     )
     object_profile = args.object_profile if args.scene == "material_object" else "default"
+    checkpoint = torch.load(Path(args.checkpoint), map_location="cpu")
+    checkpoint_action_dim = int(checkpoint["action_dim"])
+    control_mode = args.control_mode or ("pd_ee_delta_pose" if checkpoint_action_dim == 7 else None)
     agent = ManiSkillAgent(
         env_id=args.env_id,
         obs_mode=args.obs_mode,
-        control_mode=args.control_mode,
+        control_mode=control_mode,
         render_mode=None,
-        render_backend="none",
+        render_backend="none" if args.obs_mode == "state" else None,
         object_profile=object_profile,
         pseudo_blur=blur_config,
     )
@@ -286,6 +305,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
     )
     tactile = ContactFeatureExtractor()
     boundary_refiner = TactileBoundaryRefiner()
+    probe_planner = TactileProbePlanner()
     active_perception = ActivePerceptionCoordinator(
         ActivePerceptionConfig(
             enabled=args.use_active_probe,
@@ -309,19 +329,27 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
     for step in range(args.max_steps):
         uncertainty = agent.get_visual_uncertainty(obs)
         tactile_feature = tactile.extract(obs, agent.last_info, env=agent.env)
+        oracle_state = agent.get_task_state()
         decision = active_perception.decide(
             step=step,
             phase="bc_policy",
             uncertainty=uncertainty,
             tactile_feature=tactile_feature,
         )
+        probe_plan = probe_planner.plan(
+            decision=decision.to_dict(),
+            uncertainty=uncertainty,
+            oracle_state=oracle_state,
+        )
         refinement = boundary_refiner.update(
             step=step,
             decision=decision.to_dict(),
             tactile_feature=tactile_feature,
             visual_uncertainty=float(uncertainty["uncertainty"]),
+            probe_plan=probe_plan.to_dict(),
+            oracle_state=oracle_state,
         )
-        task_state = agent.get_task_state()
+        task_state = oracle_state
         obj_pos = _vector(task_state.get("obj_pos"))
         if initial_obj_z is None and obj_pos is not None:
             initial_obj_z = float(obj_pos[2])
@@ -335,6 +363,13 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
             tactile_feature=tactile_feature,
             post_probe_uncertainty=float(refinement.post_probe_uncertainty),
             task_geometry=build_task_geometry_features(task_state),
+            dominant_reason=str(uncertainty.get("dominant_reason", "none")),
+            probe_state=float(1.0 if decision.should_probe else 0.0),
+            probe_point=np.asarray(probe_plan.probe_point, dtype=np.float32),
+            refined_grasp_target=np.asarray(
+                refinement.refined_grasp_target if refinement.refined_grasp_target is not None else np.zeros(3),
+                dtype=np.float32,
+            ),
         )
         assist_phase = "bc"
         if grasp_assist is not None:
@@ -356,6 +391,9 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
                 "boundary_confidence": refinement.boundary_confidence,
                 "post_probe_uncertainty": refinement.post_probe_uncertainty,
                 "refinement_reason": refinement.reason,
+                "probe_reason": probe_plan.reason,
+                "dominant_reason": uncertainty.get("dominant_reason", ""),
+                "refined_grasp_target": refinement.refined_grasp_target,
                 "reward": float(reward),
                 "visual_triggered": bool(uncertainty["triggered"]),
                 "assist_phase": assist_phase,
@@ -373,7 +411,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         "seed": seed,
         "env_id": args.env_id,
         "obs_mode": agent.obs_mode,
-        "control_mode": args.control_mode or "default",
+        "control_mode": control_mode or "default",
         "scene": args.scene,
         "object_profile": object_profile,
         "pseudo_blur": pseudo_blur,
@@ -382,6 +420,8 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         "active_probe": bool(args.use_active_probe),
         "policy": "bc",
         "checkpoint": args.checkpoint,
+        "env_backend": agent.backend_name,
+        "init_error": agent.init_error,
         "steps": len(rewards),
         "total_reward": float(np.sum(rewards)) if rewards else 0.0,
         "success": success,
@@ -396,7 +436,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         "max_obj_lift": max_obj_lift,
         "grasp_assist": bool(args.grasp_assist),
         "trace_path": str(trace_path),
-        "fallback_used": bool(agent.obs_mode != args.obs_mode),
+        "fallback_used": bool(agent.using_mock_env or agent.obs_mode != args.obs_mode),
         "blur_config": asdict(blur_config),
     }
 
@@ -418,6 +458,9 @@ def write_trace(rows: list[dict], trace_path: Path) -> None:
         "boundary_confidence",
         "post_probe_uncertainty",
         "refinement_reason",
+        "probe_reason",
+        "dominant_reason",
+        "refined_grasp_target",
         "reward",
         "visual_triggered",
         "assist_phase",
@@ -451,6 +494,8 @@ def write_summary(rows: list[dict], output_dir: Path) -> None:
         "active_probe",
         "policy",
         "checkpoint",
+        "env_backend",
+        "init_error",
         "steps",
         "total_reward",
         "success",

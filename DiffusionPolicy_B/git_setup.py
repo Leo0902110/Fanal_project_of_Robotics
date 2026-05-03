@@ -84,7 +84,8 @@ def main():
     # 这是防止清华源默认安装 CPU 版本的唯一可靠方法。
     run_cmd(
         f"\"{python_exe}\" -m pip install torch==2.6.0 torchvision==0.21.0 "
-        f"--index-url https://download.pytorch.org/whl/cu124",
+        f"--index-url https://pypi.tuna.tsinghua.edu.cn/simple"
+        f"--extra-index-url https://download.pytorch.org/whl/cu124 ",
         "安装 PyTorch 2.6.0 (CUDA 12.4)"
     )
     

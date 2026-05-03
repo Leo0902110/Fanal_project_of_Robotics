@@ -3,11 +3,17 @@ from .dataset import (
     LEGACY_BC_FEATURE_NAMES,
     ORACLE_BC_FEATURE_NAMES,
     ORACLE_GEOMETRY_FEATURE_NAMES,
+    REASON_VOCAB,
+    REMOTE_POLICY_FEATURE_NAMES,
     DemoDataset,
     DemoEpisode,
+    TrajectoryWindow,
+    TrajectoryWindowDataset,
     build_policy_feature_vector,
+    build_policy_features,
     build_transition_feature_matrix,
     flatten_observation,
+    reason_to_one_hot,
 )
 
 __all__ = [
@@ -15,9 +21,15 @@ __all__ = [
     "LEGACY_BC_FEATURE_NAMES",
     "ORACLE_BC_FEATURE_NAMES",
     "ORACLE_GEOMETRY_FEATURE_NAMES",
+    "REASON_VOCAB",
+    "REMOTE_POLICY_FEATURE_NAMES",
     "DemoDataset",
     "DemoEpisode",
+    "TrajectoryWindow",
+    "TrajectoryWindowDataset",
     "build_policy_feature_vector",
+    "build_policy_features",
     "build_transition_feature_matrix",
     "flatten_observation",
+    "reason_to_one_hot",
 ]

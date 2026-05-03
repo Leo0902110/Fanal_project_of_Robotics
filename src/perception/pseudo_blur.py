@@ -238,7 +238,6 @@ def apply_pseudo_blur(
     degrade(obs)
     return obs
 
-
 class VisualUncertaintyDetector:
     """Depth-based pseudo-blur detector with normalized, threshold-friendly output."""
 

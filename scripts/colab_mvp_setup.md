@@ -50,16 +50,46 @@ else:
 ## 5. 跑 RGBD MVP 实验
 
 ```python
-!python main.py --mode mvp --obs-mode rgbd --max-steps 120 --output-dir results/mvp
+!python main.py --mode mvp --obs-mode rgbd --policy scripted --max-steps 120 --output-dir results/mvp
 ```
 
 如果 Colab 的 Vulkan/RGBD 渲染失败，先退回 state 版本：
 
 ```python
-!python main.py --mode mvp --obs-mode state --max-steps 120 --no-video --output-dir results/mvp_state
+!python main.py --mode mvp --obs-mode state --policy scripted --max-steps 120 --no-video --output-dir results/mvp_state
 ```
 
-## 6. 查看结果
+## 6. 跑完整 BC 训练链
+
+推荐直接使用一键 Colab 脚本：
+
+```python
+!bash scripts/run_colab_training_demo.sh
+```
+
+这个脚本会先验证 scripted baseline 是否至少出现成功轨迹，再继续进入训练链。
+
+更短的专用说明见：
+
+```text
+scripts/colab_training_demo.md
+```
+
+如果你只想调用训练链本体，也可以直接跑：
+
+```python
+!bash scripts/run_bc_pipeline.sh
+
+这个训练链内部会显式使用 `--policy scripted` 采集 demo，避免把失败轨迹当作示范数据。
+```
+
+如果你想先缩短验证时间，可以减少 episode 和 epoch：
+
+```python
+!NUM_EPISODES=8 MAX_STEPS=60 TRAIN_EPOCHS=5 bash scripts/run_bc_pipeline.sh
+```
+
+## 7. 查看结果
 
 ```python
 import pandas as pd
@@ -74,7 +104,23 @@ results/mvp/mvp_results.json
 results/mvp/*.mp4
 ```
 
-## 7. 专门渲染机械臂视频
+BC 训练链结果文件：
+
+```text
+data/demos/pickcube_vtabr/
+runs/bc_vtabr/bc_policy.pt
+runs/bc_vtabr/bc_metrics.json
+results/bc_vtabr/bc_eval/bc_eval_results.csv
+results/bc_vtabr/fallback_eval/fallback_eval_results.csv
+```
+
+请额外关注结果里的 `env_backend` 列：
+
+- `maniskill` 表示真 ManiSkill 环境已正常使用
+- `maniskill_state_fallback` 表示只退到了 state 版本
+- `mock` 表示 RGBD 初始化失败后，为了保留完整视觉主动感知训练链而使用了 mock fallback
+
+## 8. 专门渲染机械臂视频
 
 如果目标是生成 ManiSkill/SAPIEN 中 Panda 机械臂的 MP4 展示视频，请打开项目根目录下的：
 

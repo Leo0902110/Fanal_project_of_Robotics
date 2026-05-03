@@ -48,6 +48,7 @@ def load_transitions(
     action_targets = []
     expected_obs_dim = None
     expected_action_dim = None
+    reference_path = None
 
     for episode in dataset:
         obs = episode.observations
@@ -55,11 +56,15 @@ def load_transitions(
         if expected_obs_dim is None:
             expected_obs_dim = obs.shape[1]
             expected_action_dim = actions.shape[1]
+            reference_path = episode.path
         if obs.shape[1] != expected_obs_dim or actions.shape[1] != expected_action_dim:
             raise ValueError(
                 "All demo episodes must have matching observation and action dimensions. "
                 f"Expected ({expected_obs_dim}, {expected_action_dim}), got "
-                f"({obs.shape[1]}, {actions.shape[1]}) in {episode.path}."
+                f"({obs.shape[1]}, {actions.shape[1]}) in {episode.path}. "
+                f"Reference episode: {reference_path}. "
+                "This usually means old demos from a previous obs_mode/backend are mixed in the same demo dir. "
+                "Delete the old episode_*.npz files or recollect with --clear-output-dir."
             )
 
         obs_features.append(build_transition_feature_matrix(episode, feature_names=feature_names))

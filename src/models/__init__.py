@@ -1,3 +1,4 @@
+from .diffusion_policy import DiffusionPolicyConfig, GaussianDiffusionPolicy
 from .policies import (
 	ActivePerceptionPolicy,
 	JointScriptedPickCubePolicy,
@@ -7,9 +8,11 @@ from .policies import (
 )
 
 __all__ = [
-	"ActivePerceptionPolicy",
+    "ActivePerceptionPolicy",
+    "DiffusionPolicyConfig",
+    "GaussianDiffusionPolicy",
 	"JointScriptedPickCubePolicy",
-	"RandomPolicy",
-	"ScriptedPickCubePolicy",
-	"SineProbePolicy",
+    "RandomPolicy",
+    "ScriptedPickCubePolicy",
+    "SineProbePolicy",
 ]
