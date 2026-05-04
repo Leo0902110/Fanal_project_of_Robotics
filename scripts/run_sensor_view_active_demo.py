@@ -328,7 +328,6 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
             "contact_strength": tactile_feature["contact_strength"],
             "reward": 0.0,
         }
-        frames.append(compose_sensor_frame(camera_frame, camera_path, trace_row, require_wrist=args.require_wrist))
         context = {
             "active_probe": bool(decision.should_probe),
             "uncertainty": uncertainty,
@@ -345,7 +344,34 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
         }
         action = policy.predict(obs, step=step, context=context)
         obs, reward, done, info = agent.step(action)
+        if args.post_action_contact_update:
+            tactile_after = tactile.extract(obs, info, env=agent.env)
+            if float(tactile_after.get("contact_detected", 0.0)) > 0.0:
+                contact_refinement = boundary_refiner.update(
+                    step=step,
+                    decision=decision.to_dict(),
+                    tactile_feature=tactile_after,
+                    visual_uncertainty=float(uncertainty["uncertainty"]),
+                    probe_plan=probe_plan.to_dict(),
+                    oracle_state=oracle_state,
+                )
+                trace_row.update(
+                    {
+                        "refined": contact_refinement.refined,
+                        "boundary_confidence": contact_refinement.boundary_confidence,
+                        "confidence_delta": contact_refinement.confidence_delta,
+                        "post_probe_uncertainty": contact_refinement.post_probe_uncertainty,
+                        "refinement_reason": contact_refinement.reason,
+                        "contact_detected": tactile_after["contact_detected"],
+                        "contact_strength": tactile_after["contact_strength"],
+                        "left_force_norm": tactile_after.get("left_force_norm", 0.0),
+                        "right_force_norm": tactile_after.get("right_force_norm", 0.0),
+                        "net_force_norm": tactile_after.get("net_force_norm", 0.0),
+                        "pairwise_contact_used": tactile_after.get("pairwise_contact_used", 0.0),
+                    }
+                )
         trace_row["reward"] = reward
+        frames.append(compose_sensor_frame(camera_frame, camera_path, trace_row, require_wrist=args.require_wrist))
         trace_rows.append(trace_row)
         rewards.append(reward)
         try:
@@ -373,6 +399,12 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
         "demo_forced_probe_count": len(force_probe_steps),
         "display_probe_request_count": max(active_perception.summary()["probe_request_count"], len(force_probe_steps)),
         "final_boundary_confidence": boundary_refiner.summary()["final_boundary_confidence"],
+        "contact_step_count": int(
+            sum(float(row.get("contact_detected", 0.0) or 0.0) > 0.0 for row in trace_rows)
+        ),
+        "max_contact_strength": float(
+            max([float(row.get("contact_strength", 0.0) or 0.0) for row in trace_rows] or [0.0])
+        ),
         "video_path": str(video_path),
         "decision_trace_path": str(trace_path),
         "blur_config": asdict(blur_config),
@@ -409,6 +441,13 @@ def parse_args() -> argparse.Namespace:
             "fabricating contact force."
         ),
     )
+    parser.add_argument(
+        "--no-post-action-contact-update",
+        dest="post_action_contact_update",
+        action="store_false",
+        help="Disable the real post-action pairwise contact force update.",
+    )
+    parser.set_defaults(post_action_contact_update=True)
     parser.add_argument("--output-dir", type=Path, default=Path("results/sensor_view_active_demo"))
     return parser.parse_args()
 
