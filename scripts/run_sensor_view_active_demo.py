@@ -237,6 +237,12 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
         render_mode=None,
         render_backend="cpu",
         robot_uids=args.robot_uids,
+        sensor_configs={
+            "hand_camera": {
+                "width": args.sensor_width,
+                "height": args.sensor_height,
+            }
+        },
         pseudo_blur=blur_config,
     )
     obs = agent.reset(seed=args.seed)
@@ -392,6 +398,8 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
         "fallback_used": bool(agent.using_mock_env),
         "robot_uids": args.robot_uids,
         "camera_path": camera_path,
+        "sensor_width": args.sensor_width,
+        "sensor_height": args.sensor_height,
         "require_wrist": args.require_wrist,
         "success_rate": success,
         "total_reward": float(np.sum(rewards)) if rewards else 0.0,
@@ -429,6 +437,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=80)
     parser.add_argument("--seed", type=int, default=9)
     parser.add_argument("--fps", type=int, default=4)
+    parser.add_argument("--sensor-width", type=int, default=384)
+    parser.add_argument("--sensor-height", type=int, default=384)
     parser.add_argument("--pseudo-blur-profile", default="transparent", choices=["mild", "transparent", "dark", "reflective", "low_texture"])
     parser.add_argument("--pseudo-blur-severity", type=float, default=1.0)
     parser.add_argument("--uncertainty-threshold", type=float, default=0.5)

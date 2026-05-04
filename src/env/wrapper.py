@@ -104,6 +104,7 @@ class ManiSkillAgent:
         render_mode="rgb_array",
         render_backend=None,
         robot_uids: str | None = None,
+        sensor_configs: dict | None = None,
         object_profile: str = "default",
         pseudo_blur: PseudoBlurConfig | None = None,
         uncertainty_threshold=0.18,
@@ -139,6 +140,8 @@ class ManiSkillAgent:
             kwargs["control_mode"] = control_mode
         if robot_uids:
             kwargs["robot_uids"] = robot_uids
+        if sensor_configs:
+            kwargs["sensor_configs"] = sensor_configs
         if env_id == "MaterialPickCube-v1":
             kwargs["object_profile"] = object_profile
 
