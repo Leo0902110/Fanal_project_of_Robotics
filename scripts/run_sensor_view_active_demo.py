@@ -129,6 +129,20 @@ def _safe_float(row: dict[str, Any], key: str, default: float = 0.0) -> float:
         return default
 
 
+def _without_tactile_contact(feature: dict[str, Any]) -> dict[str, Any]:
+    masked = dict(feature)
+    for key in (
+        "contact_detected",
+        "contact_strength",
+        "left_force_norm",
+        "right_force_norm",
+        "net_force_norm",
+        "pairwise_contact_used",
+    ):
+        masked[key] = 0.0
+    return masked
+
+
 def compose_sensor_frame(
     camera_frame: np.ndarray,
     camera_path: str,
@@ -148,7 +162,8 @@ def compose_sensor_frame(
     label = "Actual ManiSkill wrist/hand camera" if any(k in camera_path.lower() for k in WRIST_KEYWORDS) else "Actual ManiSkill observation camera"
     if require_wrist and "Actual ManiSkill observation camera" in label:
         label = "Actual ManiSkill camera (not wrist-mounted)"
-    draw.text((40, 24), "Sensor-View Active Perception Demo", fill=(20, 20, 20), font=title_font)
+    demo_title = str(trace_row.get("demo_title", "Sensor-View Active Perception Demo"))
+    draw.text((40, 24), demo_title, fill=(20, 20, 20), font=title_font)
     draw.rectangle((40, 70, 800, 105), fill=(0, 0, 0))
     draw.text((56, 78), f"{label}: {camera_path}", fill=(245, 245, 245), font=small_font)
 
@@ -257,10 +272,16 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
     tactile = ContactFeatureExtractor()
     boundary_refiner = TactileBoundaryRefiner()
     probe_planner = TactileProbePlanner()
+    active_probe_enabled = not args.disable_active_probe
+    tactile_boundary_enabled = not args.disable_tactile_boundary_update
     active_perception = ActivePerceptionCoordinator(
-        ActivePerceptionConfig(enabled=True, uncertainty_threshold=args.uncertainty_threshold, probe_budget=2)
+        ActivePerceptionConfig(
+            enabled=active_probe_enabled,
+            uncertainty_threshold=args.uncertainty_threshold,
+            probe_budget=2 if active_probe_enabled else 0,
+        )
     )
-    policy = ScriptedPickCubePolicy(agent.env.action_space, use_active_probe=True, probe_steps=2)
+    policy = ScriptedPickCubePolicy(agent.env.action_space, use_active_probe=active_probe_enabled, probe_steps=2)
     force_probe_steps = _parse_step_set(args.demo_force_probe_steps)
 
     frames: list[np.ndarray] = []
@@ -273,15 +294,16 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
         camera_path, camera_frame = choose_camera(candidates, args.camera, args.require_wrist)
         uncertainty = agent.get_visual_uncertainty(obs)
         tactile_feature = tactile.extract(obs, agent.last_info, env=agent.env)
+        decision_tactile_feature = tactile_feature if tactile_boundary_enabled else _without_tactile_contact(tactile_feature)
         phase = str(getattr(policy, "phase", "fallback"))
         oracle_state = agent.get_task_state()
         decision = active_perception.decide(
             step=step,
             phase=phase,
             uncertainty=uncertainty,
-            tactile_feature=tactile_feature,
+            tactile_feature=decision_tactile_feature,
         )
-        if step in force_probe_steps:
+        if active_probe_enabled and step in force_probe_steps:
             uncertainty = dict(uncertainty)
             uncertainty.setdefault(
                 "uncertain_points",
@@ -313,16 +335,28 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
             uncertainty=uncertainty,
             oracle_state=oracle_state,
         )
+        refinement_decision = decision.to_dict()
+        refinement_tactile_feature = tactile_feature
+        if not tactile_boundary_enabled:
+            refinement_decision = {**refinement_decision, "should_probe": False}
+            refinement_tactile_feature = _without_tactile_contact(tactile_feature)
         refinement = boundary_refiner.update(
             step=step,
-            decision=decision.to_dict(),
-            tactile_feature=tactile_feature,
+            decision=refinement_decision,
+            tactile_feature=refinement_tactile_feature,
             visual_uncertainty=float(uncertainty["uncertainty"]),
             probe_plan=probe_plan.to_dict(),
             oracle_state=oracle_state,
         )
         trace_row = {
             **decision.to_dict(),
+            "demo_title": (
+                "Sensor-View Baseline: Vision Only"
+                if not active_probe_enabled and not tactile_boundary_enabled
+                else "Sensor-View Active Perception Demo"
+            ),
+            "active_probe_enabled": active_probe_enabled,
+            "tactile_boundary_update_enabled": tactile_boundary_enabled,
             "refined": refinement.refined,
             "boundary_confidence": refinement.boundary_confidence,
             "confidence_delta": refinement.confidence_delta,
@@ -350,7 +384,7 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
         }
         action = policy.predict(obs, step=step, context=context)
         obs, reward, done, info = agent.step(action)
-        if args.post_action_contact_update:
+        if args.post_action_contact_update and tactile_boundary_enabled:
             tactile_after = tactile.extract(obs, info, env=agent.env)
             if float(tactile_after.get("contact_detected", 0.0)) > 0.0:
                 contact_refinement = boundary_refiner.update(
@@ -401,6 +435,8 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
         "sensor_width": args.sensor_width,
         "sensor_height": args.sensor_height,
         "require_wrist": args.require_wrist,
+        "active_probe_enabled": active_probe_enabled,
+        "tactile_boundary_update_enabled": tactile_boundary_enabled,
         "success_rate": success,
         "total_reward": float(np.sum(rewards)) if rewards else 0.0,
         "probe_request_count": active_perception.summary()["probe_request_count"],
@@ -450,6 +486,16 @@ def parse_args() -> argparse.Namespace:
             "these early steps to display should_probe=True and REQUEST PROBE without "
             "fabricating contact force."
         ),
+    )
+    parser.add_argument(
+        "--disable-active-probe",
+        action="store_true",
+        help="Baseline mode: do not request active tactile probes from the policy/coordinator.",
+    )
+    parser.add_argument(
+        "--disable-tactile-boundary-update",
+        action="store_true",
+        help="Baseline mode: keep real contact forces out of boundary-confidence refinement.",
     )
     parser.add_argument(
         "--no-post-action-contact-update",
