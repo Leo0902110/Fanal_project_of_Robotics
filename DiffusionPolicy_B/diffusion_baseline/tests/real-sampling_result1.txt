@@ -1,0 +1,44 @@
+In training process:
+
+torch_version=2.6.0+cu124
+torch_cuda_version=12.4
+cuda_available=True
+device=cuda
+cuda_device_name=NVIDIA GeForce RTX 4060 Laptop GPU
+[警告] env 探测失败 returncode=3221225477
+[警告] ManiSkill/Gym env 子进程探测失败，主进程使用 fallback env 以避免 native crash。
+collector_env_name=FallbackReachEnv
+step=0050 loss=0.772056 buffer_size=150
+step=0100 loss=0.586762 buffer_size=200
+checkpoint_saved=diffusion_baseline\checkpoints\ckpt_step100.pt size_bytes=4813694
+step=0150 loss=0.467761 buffer_size=250
+step=0200 loss=0.246866 buffer_size=300
+checkpoint_saved=diffusion_baseline\checkpoints\ckpt_step200.pt size_bytes=4813694
+ENV_TRAIN_SUCCESS
+
+In evaluating process:
+
+checkpoint_step=200
+sampled_action_shape=(4,)
+sampled_action_min=-1.000000
+sampled_action_max=1.000000
+success_rate=0.000000
+mean_return=-169.359803
+std_return=39.780617
+ENV_EVAL_SUCCESS
+
+一、日志关键结论（速看）
+
+GPU 可用且被使用：torch_version=2.6.0+cu124, cuda_available=True, GPU = RTX 4060 — GPU 层面基本 OK。
+ManiSkill 在“子进程探测”阶段发生 Windows 原生崩溃（returncode=3221225477 = 0xC0000005，access violation），没有 Python traceback。你已经做了合理保护：fallback 环境（FallbackReachEnv）被使用，训练与 checkpoint 正常保存，说明训练链路健壮。
+Dummy → Env 训练 loss 下降良好（最终 ~0.25），说明模型可训练且优化流程可用。
+评估结果：success_rate=0.0，mean_return=-169 —— 说明 policy 在真实或 fallback 评估中未能完成任务（原因可能很多：fallback env 不支持 success 标识、动作与环境不匹配、训练步数不足、reward sparse/不利等）。
+
+二、可能导致 ManiSkill 原生崩溃（3221225477）的常见原因
+
+ManiSkill 的本地原生扩展（C/C++/CUDA）与系统/驱动/Runtime 不兼容（最常见）。
+Visual C++ Redistributable 缺失或版本不匹配。
+mani_skill_nightly wheel 与当前 Python ABI / PyTorch / CUDA 驱动不匹配（比如用与 CUDA 版本不一致或 Windows 不受支持的二进制）。
+ManiSkill 在子进程初始化时访问到不合理的显存或显卡资源，导致 native crash。
+环境/任务 ID（env_id）或初始化参数触发了 native bug（特定 env 代码路径）。
+WSL、远程桌面或显示驱动等交互导致 native crash（若使用远程桌面可导致某些渲染库崩溃）。

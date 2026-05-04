@@ -1,0 +1,5 @@
+{
+  "experiments": [
+    {"warmup_steps": 100, "batch_size": 16, "num_diffusion_steps": 5, "amp": true, "num_steps": 300}
+  ]
+}

@@ -1,11 +1,11 @@
-# 用途: 提供简单 replay buffer，用于测试最小训练闭环。
-# Purpose: Provide a simple replay buffer for smoke tests and minimal training loops.
+# 用途: 提供 replay buffer，用于测试、环境采样和最小训练闭环。
+# Purpose: Provide a replay buffer for tests, environment collection, and minimal training loops.
 
 from __future__ import annotations
 
 import random
 from collections import deque
-from typing import Any
+from typing import Any, Mapping
 
 import torch
 
@@ -31,6 +31,11 @@ class ReplayBuffer:
                 value = torch.as_tensor(value)
             cleaned[key] = value.detach().clone()
         self._storage.append(cleaned)
+
+    def push_transition(self, transition: Mapping[str, Any]) -> None:
+        """Push a transition dictionary produced by a collector."""
+
+        self.push(**dict(transition))
 
     def sample(self, batch_size: int) -> dict[str, torch.Tensor]:
         if batch_size <= 0:

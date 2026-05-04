@@ -1,0 +1,7 @@
+{
+  "experiments": [
+    {"warmup_steps": 100, "batch_size": 16, "num_diffusion_steps": 5,  "amp": true,  "num_steps": 300},
+    {"warmup_steps": 200, "batch_size": 8,  "num_diffusion_steps": 10, "amp": false, "num_steps": 300},
+    {"warmup_steps": 150, "batch_size": 16, "num_diffusion_steps": 20, "amp": true,  "num_steps": 300}
+  ]
+}
