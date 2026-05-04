@@ -10,7 +10,7 @@ import pandas as pd
 METRICS = [
     ("visual_uncertainty", "Visual uncertainty"),
     ("boundary_confidence", "Boundary confidence"),
-    ("contact_strength", "Contact strength"),
+    ("tactile_evidence_used", "Tactile evidence used"),
 ]
 
 
@@ -19,6 +19,14 @@ def _load_trace(path: Path, label: str) -> pd.DataFrame:
     if "step" not in df.columns:
         df = df.reset_index().rename(columns={"index": "step"})
     df["condition"] = label
+    if "contact_strength" not in df.columns:
+        df["contact_strength"] = 0.0
+    df["contact_strength"] = pd.to_numeric(df["contact_strength"], errors="coerce").fillna(0.0)
+    if "tactile_boundary_update_enabled" in df.columns:
+        tactile_used = df["tactile_boundary_update_enabled"].astype(str).str.lower().isin({"true", "1", "yes"})
+    else:
+        tactile_used = pd.Series([label.lower().startswith("active")] * len(df), index=df.index)
+    df["tactile_evidence_used"] = df["contact_strength"].where(tactile_used, 0.0)
     for column, _ in METRICS:
         if column not in df.columns:
             df[column] = 0.0
@@ -37,6 +45,7 @@ def _summary(df: pd.DataFrame, label: str) -> dict[str, float | str]:
         "max_boundary_confidence": float(df["boundary_confidence"].max()),
         "final_boundary_confidence": float(df["boundary_confidence"].iloc[-1]) if len(df) else 0.0,
         "max_contact_strength": float(df["contact_strength"].max()),
+        "max_tactile_evidence_used": float(df["tactile_evidence_used"].max()),
         "contact_step_count": int((df["contact_strength"] > 0).sum()),
         "probe_request_count": (
             int((df["should_probe"].astype(str).str.lower() == "true").sum()) if "should_probe" in df.columns else 0
