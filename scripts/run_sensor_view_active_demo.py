@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +19,20 @@ from src.tactile import ContactFeatureExtractor, TactileBoundaryRefiner
 
 
 WRIST_KEYWORDS = ("hand", "wrist", "tcp", "ee", "eye", "gripper")
+
+
+def _parse_step_set(value: str) -> set[int]:
+    steps: set[int] = set()
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, end = part.split("-", 1)
+            steps.update(range(int(start), int(end) + 1))
+        else:
+            steps.add(int(part))
+    return steps
 
 
 def _font(size: int) -> ImageFont.ImageFont:
@@ -241,6 +255,7 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
         ActivePerceptionConfig(enabled=True, uncertainty_threshold=args.uncertainty_threshold, probe_budget=2)
     )
     policy = ScriptedPickCubePolicy(agent.env.action_space, use_active_probe=True, probe_steps=2)
+    force_probe_steps = _parse_step_set(args.demo_force_probe_steps)
 
     frames: list[np.ndarray] = []
     trace_rows: list[dict[str, Any]] = []
@@ -260,6 +275,33 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
             uncertainty=uncertainty,
             tactile_feature=tactile_feature,
         )
+        if step in force_probe_steps:
+            uncertainty = dict(uncertainty)
+            uncertainty.setdefault(
+                "uncertain_points",
+                [
+                    {
+                        "normalized_x": 1.0 if step % 2 == 0 else -1.0,
+                        "normalized_y": 0.0,
+                        "reason": "demo_uncertain_boundary",
+                        "score": max(float(uncertainty.get("uncertainty", 0.0)), args.uncertainty_threshold),
+                    }
+                ],
+            )
+            uncertainty["uncertain_boundary_points"] = max(
+                int(uncertainty.get("uncertain_boundary_points", 0) or 0),
+                len(uncertainty["uncertain_points"]),
+            )
+            decision = replace(
+                decision,
+                ambiguity_score=max(float(decision.ambiguity_score), args.uncertainty_threshold),
+                visual_uncertainty=max(float(decision.visual_uncertainty), args.uncertainty_threshold),
+                tactile_confidence=0.0,
+                state="request_probe",
+                should_probe=True,
+                probe_index=max(int(decision.probe_index), 1),
+                reason="demo_forced_visual_ambiguity_without_contact",
+            )
         probe_plan = probe_planner.plan(
             decision=decision.to_dict(),
             uncertainty=uncertainty,
@@ -328,6 +370,8 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
         "success_rate": success,
         "total_reward": float(np.sum(rewards)) if rewards else 0.0,
         "probe_request_count": active_perception.summary()["probe_request_count"],
+        "demo_forced_probe_count": len(force_probe_steps),
+        "display_probe_request_count": max(active_perception.summary()["probe_request_count"], len(force_probe_steps)),
         "final_boundary_confidence": boundary_refiner.summary()["final_boundary_confidence"],
         "video_path": str(video_path),
         "decision_trace_path": str(trace_path),
@@ -356,6 +400,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pseudo-blur-profile", default="transparent", choices=["mild", "transparent", "dark", "reflective", "low_texture"])
     parser.add_argument("--pseudo-blur-severity", type=float, default=1.0)
     parser.add_argument("--uncertainty-threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--demo-force-probe-steps",
+        default="",
+        help=(
+            "Comma/range list such as '0,1' or '0-2'. For presentation videos, force "
+            "these early steps to display should_probe=True and REQUEST PROBE without "
+            "fabricating contact force."
+        ),
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("results/sensor_view_active_demo"))
     return parser.parse_args()
 
