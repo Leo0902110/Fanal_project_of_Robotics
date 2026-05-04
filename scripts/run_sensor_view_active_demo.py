@@ -222,6 +222,7 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
         control_mode="pd_ee_delta_pose",
         render_mode=None,
         render_backend="cpu",
+        robot_uids=args.robot_uids,
         pseudo_blur=blur_config,
     )
     obs = agent.reset(seed=args.seed)
@@ -321,6 +322,7 @@ def run_sensor_demo(args: argparse.Namespace) -> None:
     result = {
         "env_backend": agent.backend_name,
         "fallback_used": bool(agent.using_mock_env),
+        "robot_uids": args.robot_uids,
         "camera_path": camera_path,
         "require_wrist": args.require_wrist,
         "success_rate": success,
@@ -341,6 +343,11 @@ def parse_args() -> argparse.Namespace:
         description="Render an active-perception demo from actual ManiSkill RGB-D observation camera frames."
     )
     parser.add_argument("--env-id", default="PickCube-v1")
+    parser.add_argument(
+        "--robot-uids",
+        default="panda_wristcam",
+        help="Use panda_wristcam for a real gripper-mounted hand_camera when available.",
+    )
     parser.add_argument("--camera", default="auto", help="Camera path substring, or auto.")
     parser.add_argument("--require-wrist", action="store_true", help="Fail unless a hand/wrist/tcp/ee/eye camera is present.")
     parser.add_argument("--max-steps", type=int, default=80)
