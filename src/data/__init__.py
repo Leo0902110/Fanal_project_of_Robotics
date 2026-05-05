@@ -16,6 +16,7 @@ from .dataset import (
     reason_to_one_hot,
 )
 from .observation_filter import filter_observation_for_camera
+from .vision_tactile import TACTILE_FEATURE_NAMES, camera_rgbd_tensor, load_vision_tactile_npz, tactile_vector
 
 __all__ = [
     "DEFAULT_BC_FEATURE_NAMES",
@@ -24,6 +25,7 @@ __all__ = [
     "ORACLE_GEOMETRY_FEATURE_NAMES",
     "REASON_VOCAB",
     "REMOTE_POLICY_FEATURE_NAMES",
+    "TACTILE_FEATURE_NAMES",
     "DemoDataset",
     "DemoEpisode",
     "TrajectoryWindow",
@@ -33,5 +35,8 @@ __all__ = [
     "build_transition_feature_matrix",
     "flatten_observation",
     "filter_observation_for_camera",
+    "camera_rgbd_tensor",
+    "load_vision_tactile_npz",
     "reason_to_one_hot",
+    "tactile_vector",
 ]
