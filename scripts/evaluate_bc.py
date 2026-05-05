@@ -7,6 +7,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+import imageio.v2 as imageio
 import numpy as np
 import torch
 
@@ -19,6 +20,69 @@ from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordi
 from src.data import LEGACY_BC_FEATURE_NAMES, build_policy_feature_vector, filter_observation_for_camera
 from src.perception import build_pseudo_blur_config
 from src.tactile import ContactFeatureExtractor, TactileBoundaryRefiner
+
+WRIST_KEYWORDS = ("hand", "wrist", "tcp", "ee", "eye", "gripper")
+
+
+def _to_numpy(value):
+    if isinstance(value, np.ndarray):
+        return value
+    if torch.is_tensor(value):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
+
+
+def _normalize_rgb(arr: np.ndarray) -> np.ndarray | None:
+    arr = np.asarray(arr)
+    while arr.ndim >= 4 and arr.shape[0] == 1:
+        arr = arr[0]
+    if arr.ndim == 3 and arr.shape[0] in (3, 4) and arr.shape[-1] not in (3, 4):
+        arr = np.moveaxis(arr, 0, -1)
+    if arr.ndim != 3 or arr.shape[-1] not in (3, 4):
+        return None
+    arr = arr[..., :3]
+    if arr.dtype == np.uint8:
+        return arr
+    arr = arr.astype(np.float32)
+    if arr.size and np.nanmax(arr) <= 1.5:
+        arr = arr * 255.0
+    return np.uint8(np.clip(arr, 0, 255))
+
+
+def _iter_rgb_arrays(node, path=""):
+    found = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            child_path = f"{path}/{key}" if path else str(key)
+            arr = _to_numpy(value)
+            if arr is not None:
+                rgb = _normalize_rgb(arr)
+                key_lower = str(key).lower()
+                if rgb is not None and ("rgb" in key_lower or "color" in key_lower or "image" in key_lower):
+                    found.append((child_path, rgb))
+            found.extend(_iter_rgb_arrays(value, child_path))
+    return found
+
+
+def _choose_camera(candidates, camera: str, require_wrist: bool = False):
+    if not candidates:
+        raise ValueError("No RGB camera arrays found in the ManiSkill observation.")
+    camera = (camera or "").strip()
+    if camera and camera != "auto":
+        matches = [(path, arr) for path, arr in candidates if camera.lower() in path.lower()]
+        if matches:
+            return matches[0]
+        raise ValueError(f"Requested camera {camera!r} not found.")
+    wrist_matches = [
+        (path, arr)
+        for path, arr in candidates
+        if any(keyword in path.lower() for keyword in WRIST_KEYWORDS)
+    ]
+    if wrist_matches:
+        return wrist_matches[0]
+    if require_wrist:
+        raise ValueError("No wrist/hand/tcp camera found in evaluation observation.")
+    return candidates[0]
 
 
 def _success_from_info(info: dict) -> float:
@@ -350,8 +414,13 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
     initial_obj_z = None
     max_obj_lift = 0.0
     trace_rows = []
+    frames = []
 
     for step in range(args.max_steps):
+        if args.save_video:
+            candidates = _iter_rgb_arrays(obs)
+            camera_path, camera_frame = _choose_camera(candidates, args.camera, args.require_wrist)
+            frames.append(camera_frame)
         uncertainty = agent.get_visual_uncertainty(obs)
         tactile_feature = tactile.extract(obs, agent.last_info, env=agent.env)
         oracle_state = agent.get_task_state()
@@ -436,6 +505,10 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
     agent.close()
     trace_path = output_dir / f"episode_{episode_index:04d}_bc_eval_trace.csv"
     write_trace(trace_rows, trace_path)
+    video_path = ""
+    if args.save_video and frames:
+        video_path = str(output_dir / f"episode_{episode_index:04d}_bc_eval.mp4")
+        imageio.mimsave(video_path, frames, fps=args.video_fps)
     return {
         "episode": episode_index,
         "seed": seed,
@@ -471,6 +544,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         "max_obj_lift": max_obj_lift,
         "grasp_assist": bool(args.grasp_assist),
         "assist_action_mode": assist_action_mode if args.grasp_assist else "",
+        "video_path": video_path,
         "trace_path": str(trace_path),
         "fallback_used": bool(agent.using_mock_env or agent.obs_mode != args.obs_mode),
         "blur_config": asdict(blur_config),
@@ -554,6 +628,7 @@ def write_summary(rows: list[dict], output_dir: Path) -> None:
         "max_obj_lift",
         "grasp_assist",
         "assist_action_mode",
+        "video_path",
         "trace_path",
         "fallback_used",
     ]
@@ -612,6 +687,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--assist-transfer-gain", type=float, default=2.0)
     parser.add_argument("--assist-settle-threshold", type=float, default=0.028)
     parser.add_argument("--assist-joint-position-scale", type=float, default=0.0)
+    parser.add_argument("--save-video", action="store_true", help="Save the selected observation camera video for each eval episode.")
+    parser.add_argument("--camera", default="hand_camera", help="Camera path substring to record when --save-video is set.")
+    parser.add_argument("--require-wrist", action="store_true", help="Fail video recording unless a wrist/hand camera is present.")
+    parser.add_argument("--video-fps", type=int, default=6)
     return parser.parse_args()
 
 
