@@ -165,7 +165,10 @@ class OracleGraspAssist:
         action = self._base_delta_action(gripper=gripper)
         error = target_offset - tcp_to_obj
         if self.action_mode == "ee_delta_pose" and action.size >= 3:
-            action[:3] = np.clip(error / 0.08, -self.max_arm_command, self.max_arm_command)
+            # tcp_to_obj is obj_pos - tcp_pos. To reach a desired object-relative
+            # offset, the end effector should move by tcp_to_obj - target_offset.
+            ee_delta = tcp_to_obj - target_offset
+            action[:3] = np.clip(ee_delta / 0.08, -self.max_arm_command, self.max_arm_command)
             return self._finalize_action(action, task_state)
         if action.size >= 7:
             action[0] = -self.arm_gain * error[1]
