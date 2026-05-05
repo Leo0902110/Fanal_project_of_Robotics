@@ -77,6 +77,7 @@ class OracleGraspAssist:
         transfer_gain: float = 2.0,
         settle_threshold: float = 0.028,
         joint_position_scale: float = 0.0,
+        action_mode: str = "joint_delta",
     ):
         self.action_space = action_space
         self.xy_threshold = xy_threshold
@@ -89,6 +90,7 @@ class OracleGraspAssist:
         self.transfer_gain = transfer_gain
         self.settle_threshold = settle_threshold
         self.joint_position_scale = joint_position_scale
+        self.action_mode = action_mode
         self.phase = "bc"
         self.last_delta_action: np.ndarray | None = None
 
@@ -162,6 +164,9 @@ class OracleGraspAssist:
     ) -> np.ndarray:
         action = self._base_delta_action(gripper=gripper)
         error = target_offset - tcp_to_obj
+        if self.action_mode == "ee_delta_pose" and action.size >= 3:
+            action[:3] = np.clip(error / 0.08, -self.max_arm_command, self.max_arm_command)
+            return self._finalize_action(action, task_state)
         if action.size >= 7:
             action[0] = -self.arm_gain * error[1]
             action[2] = -0.65 * self.arm_gain * error[1]
@@ -178,6 +183,10 @@ class OracleGraspAssist:
             return self._finalize_action(action, task_state)
 
         error = obj_to_goal.astype(np.float32, copy=False)
+        if self.action_mode == "ee_delta_pose":
+            action[:3] = np.clip(error / 0.08, -self.max_arm_command, self.max_arm_command)
+            action[2] = max(action[2], -0.15)
+            return self._finalize_action(action, task_state)
         action[0] = self.transfer_gain * 4.0 * error[1]
         action[2] = self.transfer_gain * 2.2 * error[1]
         action[3] = self.transfer_gain * 5.0 * error[0]
@@ -275,6 +284,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
     checkpoint = torch.load(Path(args.checkpoint), map_location="cpu")
     checkpoint_action_dim = int(checkpoint["action_dim"])
     control_mode = args.control_mode or ("pd_ee_delta_pose" if checkpoint_action_dim == 7 else None)
+    assist_action_mode = "ee_delta_pose" if control_mode == "pd_ee_delta_pose" else "joint_delta"
     agent = ManiSkillAgent(
         env_id=args.env_id,
         obs_mode=args.obs_mode,
@@ -310,6 +320,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
             transfer_gain=args.assist_transfer_gain,
             settle_threshold=args.assist_settle_threshold,
             joint_position_scale=args.assist_joint_position_scale,
+            action_mode=assist_action_mode,
         )
         if args.grasp_assist
         else None
@@ -456,6 +467,7 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         "max_is_grasped": max_is_grasped,
         "max_obj_lift": max_obj_lift,
         "grasp_assist": bool(args.grasp_assist),
+        "assist_action_mode": assist_action_mode if args.grasp_assist else "",
         "trace_path": str(trace_path),
         "fallback_used": bool(agent.using_mock_env or agent.obs_mode != args.obs_mode),
         "blur_config": asdict(blur_config),
@@ -538,6 +550,7 @@ def write_summary(rows: list[dict], output_dir: Path) -> None:
         "max_is_grasped",
         "max_obj_lift",
         "grasp_assist",
+        "assist_action_mode",
         "trace_path",
         "fallback_used",
     ]
