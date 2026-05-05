@@ -76,6 +76,28 @@ def load_transitions(
     )
 
 
+def summarize_demo_metadata(demo_dir: Path) -> dict:
+    dataset = DemoDataset(demo_dir)
+    first = dataset[0].metadata
+    keys = [
+        "env_backend",
+        "fallback_used",
+        "obs_mode",
+        "robot_uids",
+        "training_camera",
+        "camera_only",
+        "sensor_width",
+        "sensor_height",
+        "learner_observation_dim",
+        "active_probe",
+    ]
+    return {
+        "demo_dir": str(demo_dir),
+        "num_episodes": len(dataset),
+        **{key: first.get(key, "") for key in keys},
+    }
+
+
 def split_train_val(
     inputs: np.ndarray,
     targets: np.ndarray,
@@ -127,7 +149,9 @@ def train(args: argparse.Namespace) -> dict:
     set_seed(args.seed)
     device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
     feature_names = ORACLE_BC_FEATURE_NAMES if args.feature_set == "oracle_geometry" else DEFAULT_BC_FEATURE_NAMES
-    inputs, targets = load_transitions(Path(args.demo_dir), feature_names=feature_names)
+    demo_dir = Path(args.demo_dir)
+    inputs, targets = load_transitions(demo_dir, feature_names=feature_names)
+    demo_metadata = summarize_demo_metadata(demo_dir)
     train_x, train_y, val_x, val_y = split_train_val(inputs, targets, args.val_fraction, args.seed)
     input_mean, input_std = fit_input_normalizer(train_x)
     train_x = normalize_inputs(train_x, input_mean, input_std)
@@ -177,6 +201,7 @@ def train(args: argparse.Namespace) -> dict:
             "input_mean": torch.from_numpy(input_mean),
             "input_std": torch.from_numpy(input_std),
             "args": vars(args),
+            "demo_metadata": demo_metadata,
         },
         checkpoint_path,
     )
@@ -186,6 +211,7 @@ def train(args: argparse.Namespace) -> dict:
         "action_dim": int(targets.shape[1]),
         "input_normalized": True,
         "checkpoint_path": str(checkpoint_path),
+        "demo_metadata": demo_metadata,
         "history": history,
         "final_train_loss": history[-1]["train_loss"] if history else 0.0,
         "final_val_loss": history[-1]["val_loss"] if history else 0.0,

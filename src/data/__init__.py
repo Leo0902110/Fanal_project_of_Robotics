@@ -15,6 +15,7 @@ from .dataset import (
     flatten_observation,
     reason_to_one_hot,
 )
+from .observation_filter import filter_observation_for_camera
 
 __all__ = [
     "DEFAULT_BC_FEATURE_NAMES",
@@ -31,5 +32,6 @@ __all__ = [
     "build_policy_features",
     "build_transition_feature_matrix",
     "flatten_observation",
+    "filter_observation_for_camera",
     "reason_to_one_hot",
 ]

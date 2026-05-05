@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator, TactileProbePlanner
-from src.data import flatten_observation
+from src.data import filter_observation_for_camera, flatten_observation
 from src.models import ActivePerceptionPolicy, JointScriptedPickCubePolicy, ScriptedPickCubePolicy, SineProbePolicy
 from src.perception import build_pseudo_blur_config
 from src.tactile import ContactFeatureExtractor, TactileBoundaryRefiner
@@ -71,6 +71,17 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
         control_mode=control_mode,
         render_mode=None,
         render_backend="none",
+        robot_uids=args.robot_uids or None,
+        sensor_configs=(
+            {
+                args.training_camera: {
+                    "width": args.sensor_width,
+                    "height": args.sensor_height,
+                }
+            }
+            if args.training_camera and args.sensor_width and args.sensor_height
+            else None
+        ),
         object_profile=object_profile,
         pseudo_blur=blur_config,
     )
@@ -156,7 +167,12 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
         tcp_to_obj, obj_to_goal = _task_geometry(context["oracle"])
         action = policy.predict(obs, step=step, context=context)
 
-        observations.append(flatten_observation(obs))
+        learner_obs = filter_observation_for_camera(
+            obs,
+            camera=args.training_camera,
+            keep_state=not args.camera_only,
+        )
+        observations.append(flatten_observation(learner_obs))
         actions.append(np.asarray(action, dtype=np.float32).reshape(-1))
         uncertainty_values.append(float(uncertainty["uncertainty"]))
         boundary_confidence.append(float(refinement.boundary_confidence))
@@ -212,6 +228,12 @@ def collect_episode(args: argparse.Namespace, episode_index: int, output_dir: Pa
         "pseudo_blur_profile": blur_config.profile,
         "pseudo_blur_severity": blur_config.severity,
         "active_probe": active_probe,
+        "robot_uids": args.robot_uids,
+        "training_camera": args.training_camera,
+        "camera_only": bool(args.camera_only),
+        "sensor_width": args.sensor_width,
+        "sensor_height": args.sensor_height,
+        "learner_observation_dim": int(observations[0].shape[0]) if observations else 0,
         "requested_policy": args.policy,
         "effective_policy": effective_policy,
         "env_backend": agent.backend_name,
@@ -260,6 +282,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--env-id", default="PickCube-v1")
     parser.add_argument("--obs-mode", choices=["state", "rgbd"], default="rgbd")
+    parser.add_argument("--robot-uids", default="", help="Use panda_wristcam to collect eye-in-hand demonstrations.")
+    parser.add_argument(
+        "--training-camera",
+        default="",
+        help="Filter stored learner observations to this camera, e.g. hand_camera. Empty keeps all cameras.",
+    )
+    parser.add_argument("--camera-only", action="store_true", help="Drop non-sensor proprioceptive state from stored demos.")
+    parser.add_argument("--sensor-width", type=int, default=384)
+    parser.add_argument("--sensor-height", type=int, default=384)
     parser.add_argument("--scene", choices=["clean", "pseudo_blur", "material_object"], default="pseudo_blur")
     parser.add_argument("--object-profile", choices=["default", "transparent", "dark", "reflective", "low_texture"], default="default")
     parser.add_argument("--pseudo-blur-profile", choices=["mild", "transparent", "dark", "reflective", "low_texture"], default="mild")

@@ -16,7 +16,7 @@ if str(ROOT) not in sys.path:
 
 from scripts.train_bc import BCPolicy
 from src.active_perception import ActivePerceptionConfig, ActivePerceptionCoordinator, TactileProbePlanner
-from src.data import LEGACY_BC_FEATURE_NAMES, build_policy_feature_vector
+from src.data import LEGACY_BC_FEATURE_NAMES, build_policy_feature_vector, filter_observation_for_camera
 from src.perception import build_pseudo_blur_config
 from src.tactile import ContactFeatureExtractor, TactileBoundaryRefiner
 
@@ -281,6 +281,17 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         control_mode=control_mode,
         render_mode=None,
         render_backend="none" if args.obs_mode == "state" else None,
+        robot_uids=args.robot_uids or None,
+        sensor_configs=(
+            {
+                args.training_camera: {
+                    "width": args.sensor_width,
+                    "height": args.sensor_height,
+                }
+            }
+            if args.training_camera and args.sensor_width and args.sensor_height
+            else None
+        ),
         object_profile=object_profile,
         pseudo_blur=blur_config,
     )
@@ -356,8 +367,13 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         if initial_obj_z is not None and obj_pos is not None:
             max_obj_lift = max(max_obj_lift, float(obj_pos[2]) - initial_obj_z)
 
-        action = policy.predict(
+        learner_obs = filter_observation_for_camera(
             obs,
+            camera=args.training_camera,
+            keep_state=not args.camera_only,
+        )
+        action = policy.predict(
+            learner_obs,
             uncertainty=float(uncertainty["uncertainty"]),
             boundary_confidence=float(refinement.boundary_confidence),
             tactile_feature=tactile_feature,
@@ -418,6 +434,11 @@ def evaluate_episode(args: argparse.Namespace, episode_index: int, output_dir: P
         "pseudo_blur_profile": blur_config.profile,
         "pseudo_blur_severity": blur_config.severity,
         "active_probe": bool(args.use_active_probe),
+        "robot_uids": args.robot_uids,
+        "training_camera": args.training_camera,
+        "camera_only": bool(args.camera_only),
+        "sensor_width": args.sensor_width,
+        "sensor_height": args.sensor_height,
         "policy": "bc",
         "checkpoint": args.checkpoint,
         "env_backend": agent.backend_name,
@@ -492,6 +513,11 @@ def write_summary(rows: list[dict], output_dir: Path) -> None:
         "pseudo_blur_profile",
         "pseudo_blur_severity",
         "active_probe",
+        "robot_uids",
+        "training_camera",
+        "camera_only",
+        "sensor_width",
+        "sensor_height",
         "policy",
         "checkpoint",
         "env_backend",
@@ -532,6 +558,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=100)
     parser.add_argument("--env-id", default="PickCube-v1")
     parser.add_argument("--obs-mode", choices=["state", "rgbd"], default="rgbd")
+    parser.add_argument("--robot-uids", default="", help="Use panda_wristcam to evaluate eye-in-hand policies.")
+    parser.add_argument(
+        "--training-camera",
+        default="",
+        help="Filter policy observations to this camera, e.g. hand_camera. Must match collection.",
+    )
+    parser.add_argument("--camera-only", action="store_true", help="Drop non-sensor proprioceptive state before policy inference.")
+    parser.add_argument("--sensor-width", type=int, default=384)
+    parser.add_argument("--sensor-height", type=int, default=384)
     parser.add_argument(
         "--control-mode",
         choices=[
